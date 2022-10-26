@@ -14,11 +14,10 @@ from isaacgym import gymapi
 from isaacgym.torch_utils import *
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from isaacgymenvs.utils.reformat import omegaconf_to_dict
-from sympy import print_fcode
 import torch
 
-from dexgrasp.utils.isaacgym_math import quaternion_mul
-from dexgrasp.utils.isaacgym_drawing import draw_6D_pose, draw_bbox
+from isaacgymenvs.utils.dexgrasp.math_utils import quaternion_mul
+from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_bbox
 
 
 class KukaAllegroGrasp(VecTask):
