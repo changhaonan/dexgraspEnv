@@ -46,6 +46,9 @@ class KukaAllegroGrasp(VecTask):
         self.fall_penalty = self.cfg["env"]["fallPenalty"]
         self.rot_eps = self.cfg["env"]["rotEps"]
 
+        self.vel_obs_scale = 0.2  # Scale factor of velocity based observations
+        self.force_torque_obs_scale = 10.0  # Scale factor of velocity based observations
+
         self.reset_position_noise = self.cfg["env"]["resetPositionNoise"]
         self.reset_rotation_noise = self.cfg["env"]["resetRotationNoise"]
         self.reset_dof_pos_noise = self.cfg["env"]["resetDofPosRandomInterval"]
@@ -73,7 +76,7 @@ class KukaAllegroGrasp(VecTask):
         self.goal_random_range = self.cfg["task"]["goal"]["random_range"]
 
         # Env settings
-        self.cfg["env"]["numObservations"] = 42
+        self.cfg["env"]["numObservations"] = 89
         self.cfg["env"]["numStates"] = 42
         self.cfg["env"]["numActions"] = 23
 
@@ -555,10 +558,11 @@ class KukaAllegroGrasp(VecTask):
             3, dtype=torch.float, device=self.device
         )
         y_unit_tensor = to_torch([0, 1, 0], dtype=torch.float, device=self.device)
+        pi_device = torch.Tensor([np.pi]).float().to(self.device)
         init_quat = quat_mul(
-            quat_from_angle_axis(np.pi, y_unit_tensor),
+            quat_from_angle_axis(pi_device, y_unit_tensor),
             torch.tensor(
-                [-0.7071, 0.0000, 0.0000, 0.7071], dtype=torch.float, device=self.device
+                [[-0.7071, 0.0000, 0.0000, 0.7071]], dtype=torch.float, device=self.device
             ),
         )
         self.root_state_tensor[self.kuka_indices[env_ids], 3:7] = init_quat
@@ -613,6 +617,14 @@ class KukaAllegroGrasp(VecTask):
         # Reset all envs
         all_env_ids = torch.arange(self.num_envs, device=self.device)
         self.reset_idx(all_env_ids, all_env_ids)
+        
+        # Compute observations
+        self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
+        # Asymmetric actor-critic
+        if self.num_states > 0:
+            self.obs_dict["states"] = self.get_state()
+
+        return self.obs_dict
 
     def pre_physics_step(self, actions):
         # Check reset status
@@ -659,6 +671,7 @@ class KukaAllegroGrasp(VecTask):
         self.compute_reward(self.actions)
 
     def compute_observations(self):
+        # Compute state
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
@@ -671,7 +684,22 @@ class KukaAllegroGrasp(VecTask):
 
         self.goal_pos = self.goal_states[:, :3]
         self.goal_rot = self.goal_states[:, 3:7]
+        # Compute full observation
+        self.compute_full_observations()
 
+    def compute_full_observations(self):
+        # Kuka position and speed
+        self.obs_buf[:, 0:self.num_kuka_dofs] = unscale(self.kuka_dof_pos, self.kuka_dof_lower_limits, self.kuka_dof_upper_limits)
+        self.obs_buf[:, self.num_kuka_dofs:2*self.num_kuka_dofs] = self.vel_obs_scale * self.kuka_dof_vel
+        # Object position and speed
+        self.obs_buf[:, 2*self.num_kuka_dofs:2*self.num_kuka_dofs+7] = self.object_pose
+        self.obs_buf[:, 2*self.num_kuka_dofs+7:2*self.num_kuka_dofs+10] = self.object_linvel
+        self.obs_buf[:, 2*self.num_kuka_dofs+10:2*self.num_kuka_dofs+13] = self.vel_obs_scale * self.object_angvel
+        # Goal position
+        self.obs_buf[:, 2*self.num_kuka_dofs+13:2*self.num_kuka_dofs+20] = self.goal_states[:, :7]
+        # Action
+        self.obs_buf[:, 2*self.num_kuka_dofs+20:3*self.num_kuka_dofs+20] = self.actions
+        
     def compute_reward(self, actions):
         (
             self.rew_buf[:],

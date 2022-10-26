@@ -6,8 +6,8 @@ physics_engine: 'physx'
 # if given, will override the device setting in gym.
 env: 
   numEnvs: ${resolve_default:16384,${...num_envs}}
-  controlMode: "position"  # "position", "velocity", "effort"
   numObjects: 1
+  controlMode: "position"  # "position", "velocity", "effort"
   objectType: 5  # Type of bjects to place in the bin: 0 - box, 1 - meat can, 2 - banana, 3 - mug, 4 - brick, 5 - random
   envSpacing: 1.5
   episodeLength: 600
@@ -55,7 +55,6 @@ env:
   maxConsecutiveSuccesses: 0
 
   asset:
-    assetRoot: "/home/robot-learning/Software/isaacgym/assets"
     assetFileNameKuka: "urdf/kuka_allegro_description/kuka_allegro.urdf"
     assetFileNameBin: "urdf/tray/traybox.urdf"
     assetFileNameCan: "urdf/ycb/010_potted_meat_can/010_potted_meat_can.urdf"
