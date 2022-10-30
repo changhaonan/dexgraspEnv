@@ -47,7 +47,9 @@ class KukaAllegroGrasp(VecTask):
         self.rot_eps = self.cfg["env"]["rotEps"]
 
         self.vel_obs_scale = 0.2  # Scale factor of velocity based observations
-        self.force_torque_obs_scale = 10.0  # Scale factor of velocity based observations
+        self.force_torque_obs_scale = (
+            10.0  # Scale factor of velocity based observations
+        )
 
         self.reset_position_noise = self.cfg["env"]["resetPositionNoise"]
         self.reset_rotation_noise = self.cfg["env"]["resetRotationNoise"]
@@ -128,9 +130,9 @@ class KukaAllegroGrasp(VecTask):
         self.kuka_dof_vel = self.kuka_dof_state[..., 1]
 
         self.rigid_body_states = gymtorch.wrap_tensor(rigid_body_tensor).view(
-            self.num_envs, -1, 13
+            -1, 13
         )
-        self.num_bodies = self.rigid_body_states.shape[1]
+        self.num_bodies = self.rigid_body_states.shape[0] / self.num_envs
 
         self.root_state_tensor = gymtorch.wrap_tensor(actor_root_state_tensor).view(
             -1, 13
@@ -189,7 +191,9 @@ class KukaAllegroGrasp(VecTask):
 
     def _create_envs(self, num_envs, spacing, num_per_row):
         # Configuration
-        asset_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../assets')
+        asset_root = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "../../assets"
+        )
 
         # Configure table
         asset_options = gymapi.AssetOptions()
@@ -318,6 +322,14 @@ class KukaAllegroGrasp(VecTask):
         self.tray_handles = []
         self.object_handles = []
         self.object_indices = []
+        self.fingertips_handles = []
+        self.fingertips_indices = []
+        fingertips_links = [
+            "thumb_link_3",
+            "index_link_3",
+            "middle_link_3",
+            "ring_link_3",
+        ]
 
         # Goal state cache
         self.goal_states = torch.zeros(
@@ -372,6 +384,17 @@ class KukaAllegroGrasp(VecTask):
             self.kuka_handles.append(kuka_handle)
             self.kuka_indices.append(kuka_indice)
             self.gym.set_actor_dof_properties(env, kuka_handle, kuka_dof_props)
+
+            # Finger tips
+            for link_name in fingertips_links:
+                fingertip_handle = self.gym.find_actor_rigid_body_handle(
+                    env, kuka_handle, link_name
+                )
+                fingertip_indice = self.gym.find_actor_rigid_body_index(
+                    env, kuka_handle, link_name, gymapi.DOMAIN_SIM
+                )
+                self.fingertips_handles.append(fingertip_handle)
+                self.fingertips_indices.append(fingertip_indice)
 
             # Add objects & goal center
             self.goal_random_center[i, 0] = table_corner.x + table_dims.x * 0.5
@@ -443,6 +466,9 @@ class KukaAllegroGrasp(VecTask):
         )
         self.kuka_indices = to_torch(
             self.kuka_indices, dtype=torch.long, device=self.device
+        )
+        self.fingertips_indices = to_torch(
+            self.fingertips_indices, dtype=torch.long, device=self.device
         )
 
     def reset_target(self, env_ids, drawing=False):
@@ -562,7 +588,9 @@ class KukaAllegroGrasp(VecTask):
         init_quat = quat_mul(
             quat_from_angle_axis(pi_device, y_unit_tensor),
             torch.tensor(
-                [[-0.7071, 0.0000, 0.0000, 0.7071]], dtype=torch.float, device=self.device
+                [[-0.7071, 0.0000, 0.0000, 0.7071]],
+                dtype=torch.float,
+                device=self.device,
             ),
         )
         self.root_state_tensor[self.kuka_indices[env_ids], 3:7] = init_quat
@@ -617,9 +645,11 @@ class KukaAllegroGrasp(VecTask):
         # Reset all envs
         all_env_ids = torch.arange(self.num_envs, device=self.device)
         self.reset_idx(all_env_ids, all_env_ids)
-        
+
         # Compute observations
-        self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
+        self.obs_dict["obs"] = torch.clamp(
+            self.obs_buf, -self.clip_obs, self.clip_obs
+        ).to(self.rl_device)
         # Asymmetric actor-critic
         if self.num_states > 0:
             self.obs_dict["states"] = self.get_state()
@@ -676,6 +706,7 @@ class KukaAllegroGrasp(VecTask):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
 
+        # Object-observation
         self.object_pose = self.root_state_tensor[self.object_indices, 0:7]
         self.object_pos = self.root_state_tensor[self.object_indices, 0:3]
         self.object_rot = self.root_state_tensor[self.object_indices, 3:7]
@@ -684,22 +715,40 @@ class KukaAllegroGrasp(VecTask):
 
         self.goal_pos = self.goal_states[:, :3]
         self.goal_rot = self.goal_states[:, 3:7]
+
+        # Fingertip-observation
+        self.fingertip_pos = self.rigid_body_states[self.fingertips_indices, 0:3]
+
         # Compute full observation
         self.compute_full_observations()
 
     def compute_full_observations(self):
         # Kuka position and speed
-        self.obs_buf[:, 0:self.num_kuka_dofs] = unscale(self.kuka_dof_pos, self.kuka_dof_lower_limits, self.kuka_dof_upper_limits)
-        self.obs_buf[:, self.num_kuka_dofs:2*self.num_kuka_dofs] = self.vel_obs_scale * self.kuka_dof_vel
+        self.obs_buf[:, 0 : self.num_kuka_dofs] = unscale(
+            self.kuka_dof_pos, self.kuka_dof_lower_limits, self.kuka_dof_upper_limits
+        )
+        self.obs_buf[:, self.num_kuka_dofs : 2 * self.num_kuka_dofs] = (
+            self.vel_obs_scale * self.kuka_dof_vel
+        )
         # Object position and speed
-        self.obs_buf[:, 2*self.num_kuka_dofs:2*self.num_kuka_dofs+7] = self.object_pose
-        self.obs_buf[:, 2*self.num_kuka_dofs+7:2*self.num_kuka_dofs+10] = self.object_linvel
-        self.obs_buf[:, 2*self.num_kuka_dofs+10:2*self.num_kuka_dofs+13] = self.vel_obs_scale * self.object_angvel
+        self.obs_buf[
+            :, 2 * self.num_kuka_dofs : 2 * self.num_kuka_dofs + 7
+        ] = self.object_pose
+        self.obs_buf[
+            :, 2 * self.num_kuka_dofs + 7 : 2 * self.num_kuka_dofs + 10
+        ] = self.object_linvel
+        self.obs_buf[:, 2 * self.num_kuka_dofs + 10 : 2 * self.num_kuka_dofs + 13] = (
+            self.vel_obs_scale * self.object_angvel
+        )
         # Goal position
-        self.obs_buf[:, 2*self.num_kuka_dofs+13:2*self.num_kuka_dofs+20] = self.goal_states[:, :7]
+        self.obs_buf[
+            :, 2 * self.num_kuka_dofs + 13 : 2 * self.num_kuka_dofs + 20
+        ] = self.goal_states[:, :7]
         # Action
-        self.obs_buf[:, 2*self.num_kuka_dofs+20:3*self.num_kuka_dofs+20] = self.actions
-        
+        self.obs_buf[
+            :, 2 * self.num_kuka_dofs + 20 : 3 * self.num_kuka_dofs + 20
+        ] = self.actions
+
     def compute_reward(self, actions):
         (
             self.rew_buf[:],
@@ -708,7 +757,7 @@ class KukaAllegroGrasp(VecTask):
             self.progress_buf[:],
             self.successes[:],
             self.consecutive_successes[:],
-        ) = compute_grasp_reward(
+        ) = compute_pickup_reward(
             self.rew_buf,
             self.reset_buf,
             self.reset_goal_buf,
@@ -836,7 +885,7 @@ def get_rlgames_env_creator(  # used to create the vec task
 ###=========================jit functions=========================###
 #####################################################################
 @torch.jit.script
-def compute_grasp_reward(
+def compute_pickup_reward(
     rew_buf,
     reset_buf,
     reset_goal_buf,
@@ -922,6 +971,84 @@ def compute_grasp_reward(
     )
 
     return reward, resets, goal_resets, progress_buf, successes, cons_successes
+
+
+@torch.jit.script
+def compute_grasp_reward(
+    rew_buf,
+    reset_buf,
+    progress_buf,
+    successes,
+    consecutive_successes,
+    max_episode_length: float,
+    object_pos,
+    object_rot,
+    fingertip_pos,
+    dist_reward_scale: float,
+    rot_reward_scale: float,
+    rot_eps: float,
+    actions,
+    action_penalty_scale: float,
+    success_tolerance: float,
+    reach_goal_bonus: float,
+    away_dist: float,
+    away_penalty: float,
+    max_consecutive_successes: int,
+    av_factor: float,
+):
+    # Distance from the fingertips to the object
+    grasp_dist = torch.norm(object_pos - fingertip_pos, p=2, dim=-1)
+    dist_rew = grasp_dist * dist_reward_scale
+    action_penalty = torch.sum(actions**2, dim=-1)
+
+    # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
+    reward = dist_rew + action_penalty * action_penalty_scale
+
+    # Find out which envs fingertips are close to the object and reset
+    success_resets = torch.where(
+        torch.abs(grasp_dist) <= success_tolerance,
+        torch.ones_like(reset_buf),
+        reset_buf,
+    )
+    successes = successes + success_resets
+
+    # Success bonus: fingertips is close enough to the object
+    reward = torch.where(success_resets == 1, reward + reach_goal_bonus, reward)
+
+    # Fall penalty: distance to the goal is larger than a threshold
+    reward = torch.where(grasp_dist >= away_dist, reward + away_penalty, reward)
+
+    # Check env termination conditions, including maximum success number
+    resets = torch.where(grasp_dist >= away_dist, torch.ones_like(reset_buf), reset_buf)
+    if max_consecutive_successes > 0:
+        # Reset progress buffer on goal envs if max_consecutive_successes > 0
+        progress_buf = torch.where(
+            torch.abs(grasp_dist) <= success_tolerance,
+            torch.zeros_like(progress_buf),
+            progress_buf,
+        )
+        resets = torch.where(
+            successes >= max_consecutive_successes, torch.ones_like(resets), resets
+        )
+
+    timed_out = progress_buf >= max_episode_length - 1
+    resets = torch.where(timed_out, torch.ones_like(resets), resets)
+
+    # Apply penalty for not reaching the goal
+    if max_consecutive_successes > 0:
+        reward = torch.where(timed_out, reward + 0.5 * away_penalty, reward)
+
+    num_resets = torch.sum(resets)
+    finished_cons_successes = torch.sum(successes * resets.float())
+
+    cons_successes = torch.where(
+        num_resets > 0,
+        av_factor * finished_cons_successes / num_resets
+        + (1.0 - av_factor) * consecutive_successes,
+        consecutive_successes,
+    )
+
+    return reward, resets, success_resets, progress_buf, successes, cons_successes
 
 
 @torch.jit.script
