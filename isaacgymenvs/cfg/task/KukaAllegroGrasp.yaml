@@ -40,13 +40,14 @@ env:
   forceDecayInterval: 0.08
 
   # Reward -> dictionary
-  distRewardScale: -10.0
+  distRewardScale: 1.0 # -10.0
+  distTolerance: 0.1
   rotRewardScale: 1.0
   rotEps: 0.1
-  actionPenaltyScale: -0.0002
+  actionPenaltyScale: -0.0000 # -0.0002
   reachGoalBonus: 250
-  fallDistance: 1.0
-  fallPenalty: 0.0
+  awayDistance: 1.0
+  awayPenalty: 0.0
 
   observationType: "full_state" #"openai" # can be "openai", "full_no_vel", "full", "full_state"
   asymmetric_observations: False

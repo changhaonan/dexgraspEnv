@@ -17,7 +17,11 @@ from isaacgymenvs.utils.reformat import omegaconf_to_dict
 import torch
 
 from isaacgymenvs.utils.dexgrasp.math_utils import quaternion_mul
-from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_bbox
+from isaacgymenvs.utils.dexgrasp.drawing_utils import (
+    draw_6D_pose,
+    draw_3D_pose,
+    draw_bbox,
+)
 
 
 class KukaAllegroGrasp(VecTask):
@@ -38,12 +42,13 @@ class KukaAllegroGrasp(VecTask):
 
         # Reward related
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
+        self.dist_tolerance = self.cfg["env"]["distTolerance"]
         self.rot_reward_scale = self.cfg["env"]["rotRewardScale"]
         self.action_penalty_scale = self.cfg["env"]["actionPenaltyScale"]
         self.success_tolerance = self.cfg["env"]["successTolerance"]
         self.reach_goal_bonus = self.cfg["env"]["reachGoalBonus"]
-        self.fall_dist = self.cfg["env"]["fallDistance"]
-        self.fall_penalty = self.cfg["env"]["fallPenalty"]
+        self.away_dist = self.cfg["env"]["awayDistance"]
+        self.away_penalty = self.cfg["env"]["awayPenalty"]
         self.rot_eps = self.cfg["env"]["rotEps"]
 
         self.vel_obs_scale = 0.2  # Scale factor of velocity based observations
@@ -129,9 +134,7 @@ class KukaAllegroGrasp(VecTask):
         self.kuka_dof_pos = self.kuka_dof_state[..., 0]
         self.kuka_dof_vel = self.kuka_dof_state[..., 1]
 
-        self.rigid_body_states = gymtorch.wrap_tensor(rigid_body_tensor).view(
-            -1, 13
-        )
+        self.rigid_body_states = gymtorch.wrap_tensor(rigid_body_tensor).view(-1, 13)
         self.num_bodies = self.rigid_body_states.shape[0] / self.num_envs
 
         self.root_state_tensor = gymtorch.wrap_tensor(actor_root_state_tensor).view(
@@ -241,7 +244,7 @@ class KukaAllegroGrasp(VecTask):
             self.gym.load_asset(self.sim, asset_root, brick_asset_file, asset_options)
         )
 
-        spawn_height = gymapi.Vec3(0.0, 0.0, 0.0)
+        self.spawn_height = 0.0
 
         # Configure & load kuka
         asset_options.fix_base_link = True
@@ -322,6 +325,8 @@ class KukaAllegroGrasp(VecTask):
         self.tray_handles = []
         self.object_handles = []
         self.object_indices = []
+
+        # Fingertips config
         self.fingertips_handles = []
         self.fingertips_indices = []
         fingertips_links = [
@@ -330,6 +335,7 @@ class KukaAllegroGrasp(VecTask):
             "middle_link_3",
             "ring_link_3",
         ]
+        self.num_fingertips = len(fingertips_links)
 
         # Goal state cache
         self.goal_states = torch.zeros(
@@ -409,7 +415,7 @@ class KukaAllegroGrasp(VecTask):
                 y = table_dims.y + self.box_size * 1.2 * j - 0.05
                 z = table_corner.z + table_dims.z * 0.5 + np.random.rand() * 0.3 - 0.15
 
-                object_pose.p = gymapi.Vec3(x, y, z) + spawn_height
+                object_pose.p = gymapi.Vec3(x, y + self.spawn_height, z)
 
                 object_asset = object_assets[0]
                 if self.object_type >= 5:
@@ -471,7 +477,7 @@ class KukaAllegroGrasp(VecTask):
             self.fingertips_indices, dtype=torch.long, device=self.device
         )
 
-    def reset_target(self, env_ids, drawing=False):
+    def reset_target(self, env_ids):
         # Random rot
         rand_floats = torch_rand_float(-1.0, 1.0, (len(env_ids), 2), device=self.device)
         new_rot = randomize_rotation(
@@ -499,39 +505,6 @@ class KukaAllegroGrasp(VecTask):
 
         self.goal_states[env_ids, 3:7] = new_rot
 
-        if drawing:
-            # Reset drawing
-            self.gym.clear_lines(self.viewer)
-            for env_id in env_ids:
-                # Draw 6D pose
-                # Get pose to cpu
-                pos = self.goal_states[env_id, 0:3].to("cpu").numpy()
-                rot = self.goal_states[env_id, 3:7].to("cpu").numpy()
-                draw_6D_pose(
-                    self.gym,
-                    self.viewer,
-                    self.envs[env_id],
-                    pos,
-                    rot,
-                )
-                # Draw bbox
-                random_center = self.goal_random_center[env_id].to("cpu").numpy()
-                bbox = np.array(
-                    [
-                        [
-                            random_center[0] - self.goal_random_range[0],
-                            random_center[1] - self.goal_random_range[1],
-                            random_center[2] - self.goal_random_range[2],
-                        ],
-                        [
-                            random_center[0] + self.goal_random_range[0],
-                            random_center[1] + self.goal_random_range[1],
-                            random_center[2] + self.goal_random_range[2],
-                        ],
-                    ]
-                )
-                draw_bbox(self.gym, self.viewer, self.envs[env_id], bbox)
-
         # Set flag
         self.reset_goal_buf[env_ids] = 0
 
@@ -545,7 +518,6 @@ class KukaAllegroGrasp(VecTask):
             self.y_unit_tensor[env_ids],
         )
         # Random pos
-        spawn_height = 0.2
         rand_x = (
             torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device)
             * self.goal_random_range[0]
@@ -553,7 +525,7 @@ class KukaAllegroGrasp(VecTask):
         rand_y = (
             torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device)
             * self.goal_random_range[1]
-            + spawn_height
+            + self.spawn_height
         )
         rand_z = (
             torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device)
@@ -631,7 +603,7 @@ class KukaAllegroGrasp(VecTask):
 
     def reset_idx(self, env_ids, goal_env_ids):
         # Randomize target poses
-        self.reset_target(goal_env_ids, self.debug_viz)
+        self.reset_target(goal_env_ids)
         # Randomize object poses
         self.reset_object(env_ids)
         # Reset robot
@@ -663,10 +635,10 @@ class KukaAllegroGrasp(VecTask):
 
         # If only goals need reset, then call set API
         if len(goal_env_ids) > 0 and len(env_ids) == 0:
-            self.reset_target(goal_env_ids, self.debug_viz)
+            self.reset_target(goal_env_ids)
         # If goals need reset in addition to other envs, call set API in reset()
         elif len(goal_env_ids) > 0:
-            self.reset_target(goal_env_ids, self.debug_viz)
+            self.reset_target(goal_env_ids)
 
         if len(env_ids) > 0:
             self.reset_idx(env_ids, goal_env_ids)
@@ -698,7 +670,8 @@ class KukaAllegroGrasp(VecTask):
         self.progress_buf += 1
         self.randomize_buf += 1
         self.compute_observations()
-        self.compute_reward(self.actions)
+        self.compute_reward_v2()  # V2 is grasp, V1 is pickup
+        self.draw_auxiliary()
 
     def compute_observations(self):
         # Compute state
@@ -723,14 +696,14 @@ class KukaAllegroGrasp(VecTask):
         self.compute_full_observations()
 
     def compute_full_observations(self):
-        # Kuka position and speed
+        # Kuka: pos & vel
         self.obs_buf[:, 0 : self.num_kuka_dofs] = unscale(
             self.kuka_dof_pos, self.kuka_dof_lower_limits, self.kuka_dof_upper_limits
         )
         self.obs_buf[:, self.num_kuka_dofs : 2 * self.num_kuka_dofs] = (
             self.vel_obs_scale * self.kuka_dof_vel
         )
-        # Object position and speed
+        # Object: pos & vel
         self.obs_buf[
             :, 2 * self.num_kuka_dofs : 2 * self.num_kuka_dofs + 7
         ] = self.object_pose
@@ -740,7 +713,7 @@ class KukaAllegroGrasp(VecTask):
         self.obs_buf[:, 2 * self.num_kuka_dofs + 10 : 2 * self.num_kuka_dofs + 13] = (
             self.vel_obs_scale * self.object_angvel
         )
-        # Goal position
+        # Target: pos
         self.obs_buf[
             :, 2 * self.num_kuka_dofs + 13 : 2 * self.num_kuka_dofs + 20
         ] = self.goal_states[:, :7]
@@ -749,7 +722,60 @@ class KukaAllegroGrasp(VecTask):
             :, 2 * self.num_kuka_dofs + 20 : 3 * self.num_kuka_dofs + 20
         ] = self.actions
 
-    def compute_reward(self, actions):
+    def draw_auxiliary(self):
+        self.gym.clear_lines(self.viewer)
+
+        # Draw random
+        for env_idx in range(self.num_envs):
+            # Draw 6D pose
+            # Get pose to cpu
+            pos = self.goal_states[env_idx, 0:3].to("cpu").numpy()
+            rot = self.goal_states[env_idx, 3:7].to("cpu").numpy()
+            draw_6D_pose(
+                self.gym,
+                self.viewer,
+                self.envs[env_idx],
+                pos,
+                rot,
+            )
+            # Draw bbox
+            random_center = self.goal_random_center[env_idx].to("cpu").numpy()
+            bbox = np.array(
+                [
+                    [
+                        random_center[0] - self.goal_random_range[0],
+                        random_center[1] - self.goal_random_range[1],
+                        random_center[2] - self.goal_random_range[2],
+                    ],
+                    [
+                        random_center[0] + self.goal_random_range[0],
+                        random_center[1] + self.goal_random_range[1],
+                        random_center[2] + self.goal_random_range[2],
+                    ],
+                ]
+            )
+            draw_bbox(self.gym, self.viewer, self.envs[env_idx], bbox)
+
+        # Draw observation
+        for env_idx in range(self.num_envs):
+            # Draw finger
+            for finger_idx in range(self.num_fingertips):
+                draw_3D_pose(
+                    self.gym,
+                    self.viewer,
+                    self.envs[env_idx],
+                    self.fingertip_pos[env_idx * self.num_fingertips + finger_idx],
+                )
+            # Draw object
+            draw_3D_pose(
+                self.gym,
+                self.viewer,
+                self.envs[env_idx],
+                self.object_pos[env_idx],
+                color=(0, 0, 1),
+            )
+
+    def compute_reward(self):
         (
             self.rew_buf[:],
             self.reset_buf[:],
@@ -776,109 +802,113 @@ class KukaAllegroGrasp(VecTask):
             self.action_penalty_scale,
             self.success_tolerance,
             self.reach_goal_bonus,
-            self.fall_dist,
-            self.fall_penalty,
+            self.away_dist,
+            self.away_penalty,
             self.max_consecutive_successes,
             self.av_factor,
         )
 
         self.extras["consecutive_successes"] = self.consecutive_successes.mean()
 
-        # Print Reward
-        print(f"Reward: {self.rew_buf}")
+        # Print Info
+        self.print_stats()
 
-        if self.print_success_stat:
-            self.total_resets = self.total_resets + self.reset_buf.sum()
-            direct_average_successes = self.total_successes + self.successes.sum()
-            self.total_successes = (
-                self.total_successes + (self.successes * self.reset_buf).sum()
-            )
+        # if self.print_success_stat:
+        #     self.total_resets = self.total_resets + self.reset_buf.sum()
+        #     direct_average_successes = self.total_successes + self.successes.sum()
+        #     self.total_successes = (
+        #         self.total_successes + (self.successes * self.reset_buf).sum()
+        #     )
 
-            # The direct average shows the overall result more quickly, but slightly undershoots long term
-            # policy performance.
+        #     # The direct average shows the overall result more quickly, but slightly undershoots long term
+        #     # policy performance.
+        #     print(
+        #         "Direct average consecutive successes = {:.1f}".format(
+        #             direct_average_successes / (self.total_resets + self.num_envs)
+        #         )
+        #     )
+        #     if self.total_resets > 0:
+        #         print(
+        #             "Post-Reset average consecutive successes = {:.1f}".format(
+        #                 self.total_successes / self.total_resets
+        #             )
+        #         )
+
+    def compute_reward_v2(self):
+        object_pos_rep = self.object_pos.repeat(1, self.num_fingertips).view(
+            self.num_envs, -1
+        )
+        fingertip_pos_view = self.fingertip_pos.view(self.num_envs, -1)
+        # grasp_dist = torch.norm(object_pos_rep - fingertip_pos_view, p=2, dim=-1)
+        # tgd = torch.clamp(grasp_dist, min=self.dist_tolerance) / self.dist_tolerance
+        # dist_rew = 1 / tgd * self.dist_reward_scale
+
+        # # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
+        # reward = dist_rew
+        # print(f"Computed reward: {reward}")
+        # print(f"Computed distance: {grasp_dist}")
+        # Compute reward
+        (
+            self.rew_buf[:],
+            self.reset_buf[:],
+            self.reset_goal_buf[:],
+            self.progress_buf[:],
+            self.successes[:],
+            self.consecutive_successes[:],
+        ) = compute_grasp_reward(
+            self.rew_buf,
+            self.reset_buf,
+            self.progress_buf,
+            self.successes,
+            self.consecutive_successes,
+            self.max_episode_length,
+            object_pos_rep,
+            fingertip_pos_view,
+            self.dist_reward_scale,
+            self.dist_tolerance,
+            self.actions,
+            self.action_penalty_scale,
+            self.success_tolerance,
+            self.reach_goal_bonus,
+            self.away_dist,  # Use fall as away for now
+            self.away_penalty,
+            self.max_consecutive_successes,
+            self.av_factor,
+        )
+
+        self.extras["consecutive_successes"] = self.consecutive_successes.mean()
+
+        # Print stats
+        self.print_stats()
+
+        # if self.print_success_stat:
+        #     self.total_resets = self.total_resets + self.reset_buf.sum()
+        #     direct_average_successes = self.total_successes + self.successes.sum()
+        #     self.total_successes = (
+        #         self.total_successes + (self.successes * self.reset_buf).sum()
+        #     )
+
+        #     # The direct average shows the overall result more quickly, but slightly undershoots long term
+        #     # policy performance.
+        #     print(
+        #         "Direct average consecutive successes = {:.1f}".format(
+        #             direct_average_successes / (self.total_resets + self.num_envs)
+        #         )
+        #     )
+        #     if self.total_resets > 0:
+        #         print(
+        #             "Post-Reset average consecutive successes = {:.1f}".format(
+        #                 self.total_successes / self.total_resets
+        #             )
+        #         )
+
+    def print_stats(self):
+        print("=============== ENV STATS ===============")
+        for env_idx in range(self.num_envs):
             print(
-                "Direct average consecutive successes = {:.1f}".format(
-                    direct_average_successes / (self.total_resets + self.num_envs)
-                )
+                f"Env {env_idx}: reward = {self.rew_buf[env_idx]}, progress = {self.progress_buf[env_idx]}",
+                f"successes = {self.successes[env_idx]}, reset = {self.reset_buf[env_idx]}."
             )
-            if self.total_resets > 0:
-                print(
-                    "Post-Reset average consecutive successes = {:.1f}".format(
-                        self.total_successes / self.total_resets
-                    )
-                )
-
-
-@hydra.main(config_name="config_cpu")  # Use cpu for ROS
-def hydra_gym_random_app(config):
-    env = KukaAllegroGrasp(
-        omegaconf_to_dict(config.task),
-        config.rl_device,
-        config.sim_device,
-        config.graphics_device_id,
-        config.headless,
-        virtual_screen_capture=False,
-        force_render=True,
-    )
-    frame_count = 0
-    actions = torch.rand((env.num_envs, env.num_actions)) * 2 - 1
-
-    while True:
-        if frame_count % 100 == 0:
-            actions = 0.3 * (torch.rand((env.num_envs, env.num_actions)) * 2 - 1)
-            env.step(actions)
-        else:
-            # Repeat the same action if not set
-            print(f"Action: {env.actions}")
-            env.step(env.actions)
-
-        if frame_count % 300 == 0:
-            # Reset the environment
-            env.reset()
-
-        frame_count += 1
-
-
-def get_rlgames_env_creator(  # used to create the vec task
-    seed: int,
-    task_config: dict,
-    task_name: str,
-    sim_device: str,
-    rl_device: str,
-    graphics_device_id: int,
-    headless: bool,
-    # Used to handle multi-gpu case
-    multi_gpu: bool = False,
-    post_create_hook: Callable = None,
-    virtual_screen_capture: bool = False,
-    force_render: bool = False,
-):
-    def create_rlgpu_env():
-        """
-        Creates the task from configurations and wraps it using RL-games wrappers if required.
-        """
-
-        # Create native task and pass custom config
-        if task_name == "KukaAllegroGrasp":
-            env = KukaAllegroGrasp(
-                task_config,
-                rl_device,
-                sim_device,
-                graphics_device_id,
-                headless,
-                virtual_screen_capture,
-                force_render,
-            )
-        else:
-            # Return nothing
-            env = None
-
-        if post_create_hook is not None:
-            post_create_hook()
-
-        return env
-
-    return create_rlgpu_env
 
 
 #####################################################################
@@ -904,8 +934,8 @@ def compute_pickup_reward(
     action_penalty_scale: float,
     success_tolerance: float,
     reach_goal_bonus: float,
-    fall_dist: float,
-    fall_penalty: float,
+    away_dist: float,
+    away_penalty: float,
     max_consecutive_successes: int,
     av_factor: float,
 ):
@@ -938,10 +968,10 @@ def compute_pickup_reward(
     reward = torch.where(goal_resets == 1, reward + reach_goal_bonus, reward)
 
     # Fall penalty: distance to the goal is larger than a threshold
-    reward = torch.where(goal_dist >= fall_dist, reward + fall_penalty, reward)
+    reward = torch.where(goal_dist >= away_dist, reward + away_penalty, reward)
 
     # Check env termination conditions, including maximum success number
-    resets = torch.where(goal_dist >= fall_dist, torch.ones_like(reset_buf), reset_buf)
+    resets = torch.where(goal_dist >= away_dist, torch.ones_like(reset_buf), reset_buf)
     if max_consecutive_successes > 0:
         # Reset progress buffer on goal envs if max_consecutive_successes > 0
         progress_buf = torch.where(
@@ -958,7 +988,7 @@ def compute_pickup_reward(
 
     # Apply penalty for not reaching the goal
     if max_consecutive_successes > 0:
-        reward = torch.where(timed_out, reward + 0.5 * fall_penalty, reward)
+        reward = torch.where(timed_out, reward + 0.5 * away_penalty, reward)
 
     num_resets = torch.sum(resets)
     finished_cons_successes = torch.sum(successes * resets.float())
@@ -982,11 +1012,9 @@ def compute_grasp_reward(
     consecutive_successes,
     max_episode_length: float,
     object_pos,
-    object_rot,
     fingertip_pos,
     dist_reward_scale: float,
-    rot_reward_scale: float,
-    rot_eps: float,
+    dist_tolerance: float,
     actions,
     action_penalty_scale: float,
     success_tolerance: float,
@@ -997,8 +1025,11 @@ def compute_grasp_reward(
     av_factor: float,
 ):
     # Distance from the fingertips to the object
+    # Attracting fingertips to the object
+    # TGD: short for truncated grasp distance
     grasp_dist = torch.norm(object_pos - fingertip_pos, p=2, dim=-1)
-    dist_rew = grasp_dist * dist_reward_scale
+    tgd = torch.clamp(grasp_dist, min=dist_tolerance) / dist_tolerance
+    dist_rew = 1 / tgd * dist_reward_scale
     action_penalty = torch.sum(actions**2, dim=-1)
 
     # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty

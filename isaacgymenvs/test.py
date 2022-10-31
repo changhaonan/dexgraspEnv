@@ -32,8 +32,6 @@ def launch_test_env(cfg):
         action = env.action_space.sample()
         vec_action = np.repeat(action[np.newaxis, :], cfg.num_envs, axis=0)
         obs, reward, done, info = env.step(torch.from_numpy(vec_action).to(cfg.rl_device))
-        # print(obs, reward, done, info)
-        print(reward)
 
 
 if __name__ == "__main__":
