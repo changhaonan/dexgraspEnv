@@ -87,6 +87,9 @@ class KukaAllegroGrasp(VecTask):
         self.cfg["env"]["numStates"] = 42
         self.cfg["env"]["numActions"] = 23
 
+        # Video setting
+        self.render_mode = "rgb_array"
+
         # Init VecTask
         super().__init__(
             config=self.cfg,
@@ -165,6 +168,10 @@ class KukaAllegroGrasp(VecTask):
         self.z_unit_tensor = to_torch(
             [0, 0, 1], dtype=torch.float, device=self.device
         ).repeat((self.num_envs, 1))
+
+    # def close(self):
+    #     # A close placeholder
+    #     pass
 
     def create_sim(self):
         self.sim = super().create_sim(
@@ -811,28 +818,28 @@ class KukaAllegroGrasp(VecTask):
         self.extras["consecutive_successes"] = self.consecutive_successes.mean()
 
         # Print Info
-        self.print_stats()
+        # self.print_stats()
 
-        # if self.print_success_stat:
-        #     self.total_resets = self.total_resets + self.reset_buf.sum()
-        #     direct_average_successes = self.total_successes + self.successes.sum()
-        #     self.total_successes = (
-        #         self.total_successes + (self.successes * self.reset_buf).sum()
-        #     )
+        if self.print_success_stat:
+            self.total_resets = self.total_resets + self.reset_buf.sum()
+            direct_average_successes = self.total_successes + self.successes.sum()
+            self.total_successes = (
+                self.total_successes + (self.successes * self.reset_buf).sum()
+            )
 
-        #     # The direct average shows the overall result more quickly, but slightly undershoots long term
-        #     # policy performance.
-        #     print(
-        #         "Direct average consecutive successes = {:.1f}".format(
-        #             direct_average_successes / (self.total_resets + self.num_envs)
-        #         )
-        #     )
-        #     if self.total_resets > 0:
-        #         print(
-        #             "Post-Reset average consecutive successes = {:.1f}".format(
-        #                 self.total_successes / self.total_resets
-        #             )
-        #         )
+            # The direct average shows the overall result more quickly, but slightly undershoots long term
+            # policy performance.
+            print(
+                "Direct average consecutive successes = {:.1f}".format(
+                    direct_average_successes / (self.total_resets + self.num_envs)
+                )
+            )
+            if self.total_resets > 0:
+                print(
+                    "Post-Reset average consecutive successes = {:.1f}".format(
+                        self.total_successes / self.total_resets
+                    )
+                )
 
     def compute_reward_v2(self):
         object_pos_rep = self.object_pos.repeat(1, self.num_fingertips).view(
@@ -879,37 +886,36 @@ class KukaAllegroGrasp(VecTask):
         self.extras["consecutive_successes"] = self.consecutive_successes.mean()
 
         # Print stats
-        self.print_stats()
+        # self.print_stats()
 
-        # if self.print_success_stat:
-        #     self.total_resets = self.total_resets + self.reset_buf.sum()
-        #     direct_average_successes = self.total_successes + self.successes.sum()
-        #     self.total_successes = (
-        #         self.total_successes + (self.successes * self.reset_buf).sum()
-        #     )
+        if self.print_success_stat:
+            self.total_resets = self.total_resets + self.reset_buf.sum()
+            direct_average_successes = self.total_successes + self.successes.sum()
+            self.total_successes = (
+                self.total_successes + (self.successes * self.reset_buf).sum()
+            )
 
-        #     # The direct average shows the overall result more quickly, but slightly undershoots long term
-        #     # policy performance.
-        #     print(
-        #         "Direct average consecutive successes = {:.1f}".format(
-        #             direct_average_successes / (self.total_resets + self.num_envs)
-        #         )
-        #     )
-        #     if self.total_resets > 0:
-        #         print(
-        #             "Post-Reset average consecutive successes = {:.1f}".format(
-        #                 self.total_successes / self.total_resets
-        #             )
-        #         )
+            # The direct average shows the overall result more quickly, but slightly undershoots long term
+            # policy performance.
+            print(
+                "Direct average consecutive successes = {:.1f}".format(
+                    direct_average_successes / (self.total_resets + self.num_envs)
+                )
+            )
+            if self.total_resets > 0:
+                print(
+                    "Post-Reset average consecutive successes = {:.1f}".format(
+                        self.total_successes / self.total_resets
+                    )
+                )
 
     def print_stats(self):
         print("=============== ENV STATS ===============")
         for env_idx in range(self.num_envs):
             print(
                 f"Env {env_idx}: reward = {self.rew_buf[env_idx]}, progress = {self.progress_buf[env_idx]}",
-                f"successes = {self.successes[env_idx]}, reset = {self.reset_buf[env_idx]}."
+                f"successes = {self.successes[env_idx]}, reset = {self.reset_buf[env_idx]}.",
             )
-
 
 #####################################################################
 ###=========================jit functions=========================###

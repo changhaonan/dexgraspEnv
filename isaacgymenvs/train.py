@@ -87,8 +87,6 @@ def launch_rlg_hydra(cfg: DictConfig):
 
         run = wandb.init(
             project=cfg.wandb_project,
-            group=cfg.wandb_group,
-            entity=cfg.wandb_entity,
             config=cfg_dict,
             sync_tensorboard=True,
             name=run_name,
