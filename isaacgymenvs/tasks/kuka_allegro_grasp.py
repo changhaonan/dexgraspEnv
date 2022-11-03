@@ -782,35 +782,44 @@ class KukaAllegroGrasp(VecTask):
                 color=(0, 0, 1),
             )
 
-        # get env ids
-        env_ids = torch.arange(self.num_envs, device=self.device)
+        # Initialize viewer
+        # rigid_body_tensor = self.gym.acquire_rigid_body_state_tensor(self.sim)
+        # rigid_body_states = gymtorch.wrap_tensor(rigid_body_tensor).view(
+        #     self.num_envs, -1, 13
+        # )
 
-        # initialize viewer
-        self.gym.clear_lines(self.viewer)
-        rigid_body_tensor = self.gym.acquire_rigid_body_state_tensor(self.sim)
-        rigid_body_states = gymtorch.wrap_tensor(rigid_body_tensor).view(self.num_envs, -1, 13)
+        # Colors list
+        colors = [
+            gymapi.Vec3(1.0, 0.0, 0.0),
+            gymapi.Vec3(1.0, 1.0, 0.0),
+            gymapi.Vec3(0.0, 1.0, 0.0),
+        ]
 
-        # colors list
-        colors = [gymapi.Vec3(1.0, 0.0, 0.0), gymapi.Vec3(1.0, 1.0, 0.0), gymapi.Vec3(0.0, 1.0, 0.0)]
+        for env_id in range(self.num_envs):
 
-        for env_id in env_ids:
-            
             # We fix mid point to be middle finger's middle joint (link 2)
-            mid_point_index = self.gym.find_actor_rigid_body_index(self.envs[env_id], \
-                self.kuka_handles[env_id], 'middle_link_2', gymapi.DOMAIN_ENV)
-            
+            mid_point_index = self.gym.find_actor_rigid_body_index(
+                self.envs[env_id],
+                self.kuka_handles[env_id],
+                "middle_link_2",
+                gymapi.DOMAIN_ENV,
+            )
+
             # 3d coordinates of object center and kuka hand center
             p1_x, p1_y, p1_z = self.object_pos[env_id]
-            p2_x, p2_y, p2_z = rigid_body_states[env_id][mid_point_index][:3]
+            p2_x, p2_y, p2_z = self.rigid_body_states[int(env_id * self.num_bodies + mid_point_index), :3]
 
-            #convert coordiates to 3d gymapi vectors
+            # Convert coordiates to 3d gymapi vectors
             object_center = gymapi.Vec3(p1_x, p1_y, p1_z)
             kuka_hand_center = gymapi.Vec3(p2_x, p2_y, p2_z)
 
-            # calculate manhattan distance between object and allegro hand
-            obj_hand_distance = math.sqrt((object_center.x - kuka_hand_center.x)**2 + \
-                (object_center.y - kuka_hand_center.y)**2 + (object_center.z - kuka_hand_center.z)**2)
-    
+            # Calculate manhattan distance between object and allegro hand
+            obj_hand_distance = math.sqrt(
+                (object_center.x - kuka_hand_center.x) ** 2
+                + (object_center.y - kuka_hand_center.y) ** 2
+                + (object_center.z - kuka_hand_center.z) ** 2
+            )
+
             if obj_hand_distance > abs(0) and obj_hand_distance <= abs(0.5):
                 color = colors[2]
             elif obj_hand_distance > abs(0.5) and obj_hand_distance <= abs(0.8):
@@ -819,7 +828,14 @@ class KukaAllegroGrasp(VecTask):
                 color = colors[0]
 
             # draw line betwee object and hand for tracking
-            gymutil.draw_line(object_center, kuka_hand_center, color, self.gym, self.viewer, self.envs[env_id])
+            gymutil.draw_line(
+                object_center,
+                kuka_hand_center,
+                color,
+                self.gym,
+                self.viewer,
+                self.envs[env_id],
+            )
 
     def compute_reward(self):
         (
@@ -955,6 +971,7 @@ class KukaAllegroGrasp(VecTask):
                 f"Env {env_idx}: reward = {self.rew_buf[env_idx]}, progress = {self.progress_buf[env_idx]}",
                 f"successes = {self.successes[env_idx]}, reset = {self.reset_buf[env_idx]}.",
             )
+
 
 #####################################################################
 ###=========================jit functions=========================###
