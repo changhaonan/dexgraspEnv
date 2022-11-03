@@ -41,7 +41,7 @@ env:
 
   # Reward -> dictionary
   distRewardScale: 1.0 # -10.0
-  distTolerance: 0.1
+  graspDistTolerance: 0.1
   rotRewardScale: 1.0
   rotEps: 0.1
   actionPenaltyScale: -0.0000 # -0.0002

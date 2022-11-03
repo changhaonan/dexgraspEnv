@@ -42,7 +42,7 @@ class KukaAllegroGrasp(VecTask):
 
         # Reward related
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
-        self.dist_tolerance = self.cfg["env"]["distTolerance"]
+        self.grasp_dist_tolerance = self.cfg["env"]["graspDistTolerance"]
         self.rot_reward_scale = self.cfg["env"]["rotRewardScale"]
         self.action_penalty_scale = self.cfg["env"]["actionPenaltyScale"]
         self.success_tolerance = self.cfg["env"]["successTolerance"]
@@ -902,7 +902,7 @@ class KukaAllegroGrasp(VecTask):
         )
         fingertip_pos_view = self.fingertip_pos.view(self.num_envs, -1)
         # grasp_dist = torch.norm(object_pos_rep - fingertip_pos_view, p=2, dim=-1)
-        # tgd = torch.clamp(grasp_dist, min=self.dist_tolerance) / self.dist_tolerance
+        # tgd = torch.clamp(grasp_dist, min=self.grasp_dist_tolerance) / self.grasp_dist_tolerance
         # dist_rew = 1 / tgd * self.dist_reward_scale
 
         # # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
@@ -927,7 +927,7 @@ class KukaAllegroGrasp(VecTask):
             object_pos_rep,
             fingertip_pos_view,
             self.dist_reward_scale,
-            self.dist_tolerance,
+            self.grasp_dist_tolerance,
             self.actions,
             self.action_penalty_scale,
             self.success_tolerance,
@@ -1076,7 +1076,7 @@ def compute_grasp_reward(
     object_pos,
     fingertip_pos,
     dist_reward_scale: float,
-    dist_tolerance: float,
+    grasp_dist_tolerance: float,
     actions,
     action_penalty_scale: float,
     success_tolerance: float,
@@ -1090,16 +1090,16 @@ def compute_grasp_reward(
     # Attracting fingertips to the object
     # TGD: short for truncated grasp distance
     grasp_dist = torch.norm(object_pos - fingertip_pos, p=2, dim=-1)
-    tgd = torch.clamp(grasp_dist, min=dist_tolerance) / dist_tolerance
+    tgd = torch.clamp(grasp_dist, min=grasp_dist_tolerance) / grasp_dist_tolerance
     dist_rew = 1 / tgd * dist_reward_scale
     action_penalty = torch.sum(actions**2, dim=-1)
 
     # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
     reward = dist_rew + action_penalty * action_penalty_scale
 
-    # Find out which envs fingertips are close to the object and reset
+    # Find out which envs fingertips are close enough to the object and reset
     success_resets = torch.where(
-        torch.abs(grasp_dist) <= success_tolerance,
+        torch.abs(grasp_dist) <= grasp_dist_tolerance,
         torch.ones_like(reset_buf),
         reset_buf,
     )
@@ -1115,8 +1115,9 @@ def compute_grasp_reward(
     resets = torch.where(grasp_dist >= away_dist, torch.ones_like(reset_buf), reset_buf)
     if max_consecutive_successes > 0:
         # Reset progress buffer on goal envs if max_consecutive_successes > 0
+        # This correspond to continuous work (You can succeed more than once in one task)
         progress_buf = torch.where(
-            torch.abs(grasp_dist) <= success_tolerance,
+            torch.abs(grasp_dist) <= grasp_dist_tolerance,
             torch.zeros_like(progress_buf),
             progress_buf,
         )
