@@ -15,6 +15,12 @@ Currently, the grasp reward rescribe the distance between object to finger tip. 
 - [x] Check the running.
 - [x] Fix the video recording
 
+## Train command
+
+```
+python train.py task=KukaAllegroGrasp wandb_activate=True wandb_project=KukaAllegroGrasp capture_video=True force_render=False
+```
+
 ## Trouble shooting
 
 ### Video Recording 
