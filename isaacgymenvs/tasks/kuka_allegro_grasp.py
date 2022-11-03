@@ -20,9 +20,10 @@ from isaacgymenvs.utils.dexgrasp.math_utils import quaternion_mul
 from isaacgymenvs.utils.dexgrasp.drawing_utils import (
     draw_6D_pose,
     draw_3D_pose,
-    draw_bbox,
+    draw_bbox
 )
 
+import matplotlib.pyplot as plt
 
 class KukaAllegroGrasp(VecTask):
     """VecTask-like API, only joint control"""
@@ -790,9 +791,6 @@ class KukaAllegroGrasp(VecTask):
         rigid_body_tensor = self.gym.acquire_rigid_body_state_tensor(self.sim)
         rigid_body_states = gymtorch.wrap_tensor(rigid_body_tensor).view(self.num_envs, -1, 13)
 
-        # colors list
-        colors = [gymapi.Vec3(1.0, 0.0, 0.0), gymapi.Vec3(1.0, 1.0, 0.0), gymapi.Vec3(0.0, 1.0, 0.0)]
-
         for env_id in env_ids:
             
             # We fix mid point to be middle finger's middle joint (link 2)
@@ -810,13 +808,10 @@ class KukaAllegroGrasp(VecTask):
             # calculate manhattan distance between object and allegro hand
             obj_hand_distance = math.sqrt((object_center.x - kuka_hand_center.x)**2 + \
                 (object_center.y - kuka_hand_center.y)**2 + (object_center.z - kuka_hand_center.z)**2)
-    
-            if obj_hand_distance > abs(0) and obj_hand_distance <= abs(0.5):
-                color = colors[2]
-            elif obj_hand_distance > abs(0.5) and obj_hand_distance <= abs(0.8):
-                color = colors[1]
-            else:
-                color = colors[0]
+
+            # choose color based on distance between object and robotic hand
+            colors = plt.cm.cool(obj_hand_distance)
+            color = gymapi.Vec3(colors[0], colors[1], colors[2])
 
             # draw line betwee object and hand for tracking
             gymutil.draw_line(object_center, kuka_hand_center, color, self.gym, self.viewer, self.envs[env_id])
