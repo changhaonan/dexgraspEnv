@@ -895,14 +895,6 @@ class KukaAllegroGrasp(VecTask):
             self.num_envs, -1
         )
         fingertip_pos_view = self.fingertip_pos.view(self.num_envs, -1)
-        # grasp_dist = torch.norm(object_pos_rep - fingertip_pos_view, p=2, dim=-1)
-        # tgd = torch.clamp(grasp_dist, min=self.grasp_dist_tolerance) / self.grasp_dist_tolerance
-        # dist_rew = 1 / tgd * self.dist_reward_scale
-
-        # # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
-        # reward = dist_rew
-        # print(f"Computed reward: {reward}")
-        # print(f"Computed distance: {grasp_dist}")
         # Compute reward
         (
             self.rew_buf[:],
