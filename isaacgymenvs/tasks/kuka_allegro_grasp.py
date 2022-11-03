@@ -20,9 +20,10 @@ from isaacgymenvs.utils.dexgrasp.math_utils import quaternion_mul
 from isaacgymenvs.utils.dexgrasp.drawing_utils import (
     draw_6D_pose,
     draw_3D_pose,
-    draw_bbox,
+    draw_bbox
 )
 
+import matplotlib.pyplot as plt
 
 class KukaAllegroGrasp(VecTask):
     """VecTask-like API, only joint control"""
