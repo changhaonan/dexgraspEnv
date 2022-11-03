@@ -20,10 +20,11 @@ from isaacgymenvs.utils.dexgrasp.math_utils import quaternion_mul
 from isaacgymenvs.utils.dexgrasp.drawing_utils import (
     draw_6D_pose,
     draw_3D_pose,
-    draw_bbox
+    draw_bbox,
 )
 
 import matplotlib.pyplot as plt
+
 
 class KukaAllegroGrasp(VecTask):
     """VecTask-like API, only joint control"""
@@ -783,12 +784,6 @@ class KukaAllegroGrasp(VecTask):
                 color=(0, 0, 1),
             )
 
-        # Initialize viewer
-        # rigid_body_tensor = self.gym.acquire_rigid_body_state_tensor(self.sim)
-        # rigid_body_states = gymtorch.wrap_tensor(rigid_body_tensor).view(
-        #     self.num_envs, -1, 13
-        # )
-
         # Colors list
         colors = [
             gymapi.Vec3(1.0, 0.0, 0.0),
@@ -797,7 +792,6 @@ class KukaAllegroGrasp(VecTask):
         ]
 
         for env_id in range(self.num_envs):
-
             # We fix mid point to be middle finger's middle joint (link 2)
             mid_point_index = self.gym.find_actor_rigid_body_index(
                 self.envs[env_id],
@@ -808,7 +802,9 @@ class KukaAllegroGrasp(VecTask):
 
             # 3d coordinates of object center and kuka hand center
             p1_x, p1_y, p1_z = self.object_pos[env_id]
-            p2_x, p2_y, p2_z = self.rigid_body_states[int(env_id * self.num_bodies + mid_point_index), :3]
+            p2_x, p2_y, p2_z = self.rigid_body_states[
+                int(env_id * self.num_bodies + mid_point_index), :3
+            ]
 
             # Convert coordiates to 3d gymapi vectors
             object_center = gymapi.Vec3(p1_x, p1_y, p1_z)
@@ -821,14 +817,11 @@ class KukaAllegroGrasp(VecTask):
                 + (object_center.z - kuka_hand_center.z) ** 2
             )
 
-            if obj_hand_distance > abs(0) and obj_hand_distance <= abs(0.5):
-                color = colors[2]
-            elif obj_hand_distance > abs(0.5) and obj_hand_distance <= abs(0.8):
-                color = colors[1]
-            else:
-                color = colors[0]
+            # Choose color based on distance between object and robotic hand
+            colors = plt.cm.cool(obj_hand_distance)
+            color = gymapi.Vec3(colors[0], colors[1], colors[2])
 
-            # draw line betwee object and hand for tracking
+            # Draw line betwee object and hand for tracking
             gymutil.draw_line(
                 object_center,
                 kuka_hand_center,

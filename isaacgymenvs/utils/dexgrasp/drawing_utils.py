@@ -3,6 +3,7 @@ import math
 from isaacgym import gymapi
 from isaacgym import gymutil
 
+
 def draw_6D_pose(gym, viewer, env, pos, rot, sphere_radius=0.03, axis_length=0.1):
     # Geometry
     axes_geom = gymutil.AxesGeometry(axis_length)
@@ -43,6 +44,7 @@ def draw_3D_pose(gym, viewer, env, pos, sphere_radius=0.03, color=(1, 0, 0)):
 
     # Draw
     gymutil.draw_lines(sphere_geom, gym, viewer, env, pose)
+
 
 def draw_bbox(gym, viewer, env, bbox):
     # Geometry
