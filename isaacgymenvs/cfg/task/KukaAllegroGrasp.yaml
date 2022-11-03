@@ -1,16 +1,16 @@
-# used to create the object
+# Used to create the object
 name: KukaAllegroGrasp
 
 physics_engine: 'physx'
 
-# if given, will override the device setting in gym.
+# If given, will override the device setting in gym.
 env: 
   numEnvs: ${resolve_default:16384,${...num_envs}}
   numObjects: 1
   controlMode: "position"  # "position", "velocity", "effort"
   objectType: 5  # Type of bjects to place in the bin: 0 - box, 1 - meat can, 2 - banana, 3 - mug, 4 - brick, 5 - random
   envSpacing: 1.5
-  episodeLength: 600
+  episodeLength: 2000
   enableDebugVis: True
   aggregateMode: 1
 
@@ -48,6 +48,8 @@ env:
   reachGoalBonus: 250
   awayDistance: 1.0
   awayPenalty: 0.0
+  resetStableTime: 100  # Reset will stable after resetStableTime
+  liftRewardScale: 10.0
 
   observationType: "full_state" #"openai" # can be "openai", "full_no_vel", "full", "full_state"
   asymmetric_observations: False

@@ -52,6 +52,8 @@ class KukaAllegroGrasp(VecTask):
         self.away_dist = self.cfg["env"]["awayDistance"]
         self.away_penalty = self.cfg["env"]["awayPenalty"]
         self.rot_eps = self.cfg["env"]["rotEps"]
+        self.reset_stable_time = self.cfg["env"]["resetStableTime"]
+        self.lift_reward_scale = self.cfg["env"]["liftRewardScale"]
 
         self.vel_obs_scale = 0.2  # Scale factor of velocity based observations
         self.force_torque_obs_scale = (
@@ -170,10 +172,6 @@ class KukaAllegroGrasp(VecTask):
         self.z_unit_tensor = to_torch(
             [0, 0, 1], dtype=torch.float, device=self.device
         ).repeat((self.num_envs, 1))
-
-    # def close(self):
-    #     # A close placeholder
-    #     pass
 
     def create_sim(self):
         self.sim = super().create_sim(
@@ -690,6 +688,10 @@ class KukaAllegroGrasp(VecTask):
 
         # Object-observation
         self.object_pose = self.root_state_tensor[self.object_indices, 0:7]
+        if hasattr(self, "object_pos"):
+            self.object_prev_pos = self.object_pos
+        else:
+            self.object_prev_pos = torch.zeros([self.num_objects, 3], dtype=torch.float32, device=self.rl_device)
         self.object_pos = self.root_state_tensor[self.object_indices, 0:3]
         self.object_rot = self.root_state_tensor[self.object_indices, 3:7]
         self.object_linvel = self.root_state_tensor[self.object_indices, 7:10]
@@ -895,6 +897,14 @@ class KukaAllegroGrasp(VecTask):
             self.num_envs, -1
         )
         fingertip_pos_view = self.fingertip_pos.view(self.num_envs, -1)
+        # lift_dist = object_pos_rep[:, 1] - self.object_prev_pos[:, 1]
+        # lif_rew = lift_dist * self.lift_reward_scale
+        # lif_rew = torch.where(
+        #     self.progress_buf >= self.reset_stable_time,
+        #     lif_rew,
+        #     torch.zeros_like(lif_rew)
+        # )
+        # print(f"Lift reward: {lif_rew}.")
         # Compute reward
         (
             self.rew_buf[:],
@@ -910,10 +920,13 @@ class KukaAllegroGrasp(VecTask):
             self.successes,
             self.consecutive_successes,
             self.max_episode_length,
+            self.reset_stable_time,
             object_pos_rep,
+            self.object_prev_pos,
             fingertip_pos_view,
             self.dist_reward_scale,
             self.grasp_dist_tolerance,
+            self.lift_reward_scale,
             self.actions,
             self.action_penalty_scale,
             self.success_tolerance,
@@ -1058,11 +1071,14 @@ def compute_grasp_reward(
     progress_buf,
     successes,
     consecutive_successes,
-    max_episode_length: float,
-    object_pos,
+    max_episode_length: int,
+    reset_stable_time: int,
+    object_pos_rep,
+    object_prev_pos,
     fingertip_pos,
     dist_reward_scale: float,
     grasp_dist_tolerance: float,
+    lift_reward_scale: float,
     actions,
     action_penalty_scale: float,
     success_tolerance: float,
@@ -1070,18 +1086,28 @@ def compute_grasp_reward(
     away_dist: float,
     away_penalty: float,
     max_consecutive_successes: int,
-    av_factor: float,
+    av_factor
 ):
     # Distance from the fingertips to the object
     # Attracting fingertips to the object
     # TGD: short for truncated grasp distance
-    grasp_dist = torch.norm(object_pos - fingertip_pos, p=2, dim=-1)
+    grasp_dist = torch.norm(object_pos_rep - fingertip_pos, p=2, dim=-1)
     tgd = torch.clamp(grasp_dist, min=grasp_dist_tolerance) / grasp_dist_tolerance
     dist_rew = 1 / tgd * dist_reward_scale
-    action_penalty = torch.sum(actions**2, dim=-1)
+    action_penalty = torch.sum(actions**2, dim=-1) * action_penalty_scale
+
+    # Lift reward
+    # Evaluating if the object is lifted after reset is stabled
+    lift_dist = object_pos_rep[:, 1] - object_prev_pos[:, 1]
+    lif_rew = lift_dist * lift_reward_scale
+    lif_rew = torch.where(
+        progress_buf >= reset_stable_time,
+        lif_rew,
+        torch.zeros_like(lif_rew)
+    )
 
     # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
-    reward = dist_rew + action_penalty * action_penalty_scale
+    reward = dist_rew + lif_rew + action_penalty
 
     # Find out which envs fingertips are close enough to the object and reset
     success_resets = torch.where(
