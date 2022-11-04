@@ -3,6 +3,7 @@ import math
 import os
 
 import numpy as np
+import matplotlib.pyplot as plt
 import hydra
 from typing import Callable
 
@@ -14,7 +15,9 @@ from isaacgym import gymapi
 from isaacgym.torch_utils import *
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from isaacgymenvs.utils.reformat import omegaconf_to_dict
+
 import torch
+import roma
 
 from isaacgymenvs.utils.dexgrasp.math_utils import quaternion_mul
 from isaacgymenvs.utils.dexgrasp.drawing_utils import (
@@ -22,8 +25,6 @@ from isaacgymenvs.utils.dexgrasp.drawing_utils import (
     draw_3D_pose,
     draw_bbox,
 )
-
-import matplotlib.pyplot as plt
 
 
 class KukaAllegroGrasp(VecTask):
@@ -344,6 +345,16 @@ class KukaAllegroGrasp(VecTask):
         ]
         self.num_fingertips = len(fingertips_links)
 
+        # Palm config
+        self.palm_indices = []
+        self.palm_pos_offset = torch.tensor(
+            [0.0, 0.0, 0.15], dtype=torch.float32, device=self.device
+        ).repeat(self.num_envs, 1)
+        palm_rot_vec_offset = torch.tensor(
+            [0.0, 0.0, 2.37], dtype=torch.float32, device=self.device
+        ).repeat(self.num_envs, 1)
+        self.palm_rot_offset = roma.rotvec_to_unitquat(palm_rot_vec_offset)
+
         # Goal state cache
         self.goal_states = torch.zeros(
             (self.num_envs, 13), dtype=torch.float, device=self.device
@@ -408,6 +419,15 @@ class KukaAllegroGrasp(VecTask):
                 )
                 self.fingertips_handles.append(fingertip_handle)
                 self.fingertips_indices.append(fingertip_indice)
+
+            # Palm : Offset from wrist
+            palm_indice = self.gym.find_actor_rigid_body_index(
+                env,
+                kuka_handle,
+                "iiwa7_link_7",
+                gymapi.DOMAIN_SIM,
+            )
+            self.palm_indices.append(palm_indice)
 
             # Add objects & goal center
             self.goal_random_center[i, 0] = table_corner.x + table_dims.x * 0.5
@@ -482,6 +502,9 @@ class KukaAllegroGrasp(VecTask):
         )
         self.fingertips_indices = to_torch(
             self.fingertips_indices, dtype=torch.long, device=self.device
+        )
+        self.palm_indices = to_torch(
+            self.palm_indices, dtype=torch.long, device=self.device
         )
 
     def reset_target(self, env_ids):
@@ -678,7 +701,8 @@ class KukaAllegroGrasp(VecTask):
         self.randomize_buf += 1
         self.compute_observations()
         self.compute_reward_v2()  # V2 is grasp, V1 is pickup
-        self.draw_auxiliary()
+        if self.debug_viz:
+            self.draw_auxiliary()
 
     def compute_observations(self):
         # Compute state
@@ -691,7 +715,9 @@ class KukaAllegroGrasp(VecTask):
         if hasattr(self, "object_pos"):
             self.object_prev_pos = self.object_pos
         else:
-            self.object_prev_pos = torch.zeros([self.num_objects, 3], dtype=torch.float32, device=self.rl_device)
+            self.object_prev_pos = torch.zeros(
+                [self.num_objects, 3], dtype=torch.float32, device=self.rl_device
+            )
         self.object_pos = self.root_state_tensor[self.object_indices, 0:3]
         self.object_rot = self.root_state_tensor[self.object_indices, 3:7]
         self.object_linvel = self.root_state_tensor[self.object_indices, 7:10]
@@ -703,6 +729,25 @@ class KukaAllegroGrasp(VecTask):
         # Fingertip-observation
         self.fingertip_pos = self.rigid_body_states[self.fingertips_indices, 0:3]
 
+        # Palm-observation
+        self.wrist_pos = self.rigid_body_states[self.palm_indices, 0:3]
+        self.wrist_rot = self.rigid_body_states[self.palm_indices, 3:7]
+        self.palm_pos = (
+            roma.quat_action(self.wrist_rot, self.palm_pos_offset) + self.wrist_pos
+        )
+        self.palm_rot = roma.quat_product(self.wrist_rot, self.palm_rot_offset)
+
+        # Palm reaching reward
+        object_palm_diff = self.object_pos - self.palm_pos
+        object_palm_diff_in_palm = roma.quat_action(
+            roma.quat_inverse(self.palm_rot), object_palm_diff
+        )
+        object_palm_diff_in_palm[:, 1] = torch.where(
+            object_palm_diff_in_palm[:, 1] < 0,
+            torch.tensor(0.3, dtype=torch.float32, device=self.device),
+            object_palm_diff_in_palm[:, 1],
+        )
+        self.object_palm_dist = torch.norm(object_palm_diff_in_palm, dim=-1)
         # Compute full observation
         self.compute_full_observations()
 
@@ -783,29 +828,24 @@ class KukaAllegroGrasp(VecTask):
                 self.viewer,
                 self.envs[env_idx],
                 self.object_pos[env_idx],
+                sphere_radius=0.1,
                 color=(0, 0, 1),
             )
 
-        # Colors list
-        colors = [
-            gymapi.Vec3(1.0, 0.0, 0.0),
-            gymapi.Vec3(1.0, 1.0, 0.0),
-            gymapi.Vec3(0.0, 1.0, 0.0),
-        ]
-
-        for env_id in range(self.num_envs):
-            # We fix mid point to be middle finger's middle joint (link 2)
+        # Draw link line
+        for env_idx in range(self.num_envs):
+            # We fix mid point to be middle finger's middle joint
             mid_point_index = self.gym.find_actor_rigid_body_index(
-                self.envs[env_id],
-                self.kuka_handles[env_id],
-                "middle_link_2",
+                self.envs[env_idx],
+                self.kuka_handles[env_idx],
+                "middle_link_0",
                 gymapi.DOMAIN_ENV,
             )
 
             # 3d coordinates of object center and kuka hand center
-            p1_x, p1_y, p1_z = self.object_pos[env_id]
+            p1_x, p1_y, p1_z = self.object_pos[env_idx]
             p2_x, p2_y, p2_z = self.rigid_body_states[
-                int(env_id * self.num_bodies + mid_point_index), :3
+                int(env_idx * self.num_bodies + mid_point_index), :3
             ]
 
             # Convert coordiates to 3d gymapi vectors
@@ -830,7 +870,19 @@ class KukaAllegroGrasp(VecTask):
                 color,
                 self.gym,
                 self.viewer,
-                self.envs[env_id],
+                self.envs[env_idx],
+            )
+
+        # Draw palm coordinates
+        for env_idx in range(self.num_envs):
+            draw_6D_pose(
+                self.gym,
+                self.viewer,
+                self.envs[env_idx],
+                self.palm_pos[env_idx].to("cpu").numpy(),
+                self.palm_rot[env_idx].to("cpu").numpy(),
+                axis_length=0.3,
+                color=(0, 1, 0),
             )
 
     def compute_reward(self):
@@ -869,7 +921,7 @@ class KukaAllegroGrasp(VecTask):
         self.extras["consecutive_successes"] = self.consecutive_successes.mean()
 
         # Print Info
-        # self.print_stats()
+        self.print_stats()
 
         if self.print_success_stat:
             self.total_resets = self.total_resets + self.reset_buf.sum()
@@ -912,7 +964,6 @@ class KukaAllegroGrasp(VecTask):
             self.reset_goal_buf[:],
             self.progress_buf[:],
             self.successes[:],
-            self.consecutive_successes[:],
         ) = compute_grasp_reward(
             self.rew_buf,
             self.reset_buf,
@@ -924,6 +975,7 @@ class KukaAllegroGrasp(VecTask):
             object_pos_rep,
             self.object_prev_pos,
             fingertip_pos_view,
+            self.object_palm_dist,
             self.dist_reward_scale,
             self.grasp_dist_tolerance,
             self.lift_reward_scale,
@@ -1076,6 +1128,7 @@ def compute_grasp_reward(
     object_pos_rep,
     object_prev_pos,
     fingertip_pos,
+    object_palm_dist,
     dist_reward_scale: float,
     grasp_dist_tolerance: float,
     lift_reward_scale: float,
@@ -1086,14 +1139,16 @@ def compute_grasp_reward(
     away_dist: float,
     away_penalty: float,
     max_consecutive_successes: int,
-    av_factor
+    av_factor,
 ):
     # Distance from the fingertips to the object
     # Attracting fingertips to the object
     # TGD: short for truncated grasp distance
-    grasp_dist = torch.norm(object_pos_rep - fingertip_pos, p=2, dim=-1)
-    tgd = torch.clamp(grasp_dist, min=grasp_dist_tolerance) / grasp_dist_tolerance
-    dist_rew = 1 / tgd * dist_reward_scale
+    # grasp_dist = torch.norm(object_pos_rep - fingertip_pos, p=2, dim=-1)
+
+    # Use Distance from the palm to the object
+    tgd = torch.clamp(object_palm_dist, min=grasp_dist_tolerance) / grasp_dist_tolerance
+    dist_rew = 1 / tgd * dist_reward_scale - 1.0
     action_penalty = torch.sum(actions**2, dim=-1) * action_penalty_scale
 
     # Lift reward
@@ -1101,60 +1156,28 @@ def compute_grasp_reward(
     lift_dist = object_pos_rep[:, 1] - object_prev_pos[:, 1]
     lif_rew = lift_dist * lift_reward_scale
     lif_rew = torch.where(
-        progress_buf >= reset_stable_time,
-        lif_rew,
-        torch.zeros_like(lif_rew)
+        progress_buf >= reset_stable_time, lif_rew, torch.zeros_like(lif_rew)
     )
 
     # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
     reward = dist_rew + lif_rew + action_penalty
 
-    # Find out which envs fingertips are close enough to the object and reset
+    # Sucess resets
     success_resets = torch.where(
-        torch.abs(grasp_dist) <= grasp_dist_tolerance,
+        torch.abs(object_palm_dist) <= grasp_dist_tolerance,
         torch.ones_like(reset_buf),
         reset_buf,
     )
     successes = successes + success_resets
 
-    # Success bonus: fingertips is close enough to the object
+    # Reach bonus: object-plam is close enough to the object
     reward = torch.where(success_resets == 1, reward + reach_goal_bonus, reward)
 
-    # Fall penalty: distance to the goal is larger than a threshold
-    reward = torch.where(grasp_dist >= away_dist, reward + away_penalty, reward)
-
-    # Check env termination conditions, including maximum success number
-    resets = torch.where(grasp_dist >= away_dist, torch.ones_like(reset_buf), reset_buf)
-    if max_consecutive_successes > 0:
-        # Reset progress buffer on goal envs if max_consecutive_successes > 0
-        # This correspond to continuous work (You can succeed more than once in one task)
-        progress_buf = torch.where(
-            torch.abs(grasp_dist) <= grasp_dist_tolerance,
-            torch.zeros_like(progress_buf),
-            progress_buf,
-        )
-        resets = torch.where(
-            successes >= max_consecutive_successes, torch.ones_like(resets), resets
-        )
-
+    # Timeout resets
     timed_out = progress_buf >= max_episode_length - 1
-    resets = torch.where(timed_out, torch.ones_like(resets), resets)
+    resets = torch.where(timed_out, torch.ones_like(success_resets), success_resets)
 
-    # Apply penalty for not reaching the goal
-    if max_consecutive_successes > 0:
-        reward = torch.where(timed_out, reward + 0.5 * away_penalty, reward)
-
-    num_resets = torch.sum(resets)
-    finished_cons_successes = torch.sum(successes * resets.float())
-
-    cons_successes = torch.where(
-        num_resets > 0,
-        av_factor * finished_cons_successes / num_resets
-        + (1.0 - av_factor) * consecutive_successes,
-        consecutive_successes,
-    )
-
-    return reward, resets, success_resets, progress_buf, successes, cons_successes
+    return reward, resets, success_resets, progress_buf, successes
 
 
 @torch.jit.script

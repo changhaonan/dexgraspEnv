@@ -8,10 +8,10 @@ env:
   numEnvs: ${resolve_default:16384,${...num_envs}}
   numObjects: 1
   controlMode: "position"  # "position", "velocity", "effort"
-  objectType: 5  # Type of bjects to place in the bin: 0 - box, 1 - meat can, 2 - banana, 3 - mug, 4 - brick, 5 - random
+  objectType: 3  # Type of bjects to place in the bin: 0 - box, 1 - meat can, 2 - banana, 3 - mug, 4 - brick, 5 - random
   envSpacing: 1.5
-  episodeLength: 2000
-  enableDebugVis: True
+  episodeLength: 800
+  enableDebugVis: ${resolve_default:False,${...force_render}}
   aggregateMode: 1
 
   clipObservations: 5.0
@@ -41,7 +41,7 @@ env:
 
   # Reward -> dictionary
   distRewardScale: 1.0 # -10.0
-  graspDistTolerance: 0.1
+  graspDistTolerance: 0.15
   rotRewardScale: 1.0
   rotEps: 0.1
   actionPenaltyScale: -0.0000 # -0.0002
