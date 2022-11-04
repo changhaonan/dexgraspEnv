@@ -744,7 +744,7 @@ class KukaAllegroGrasp(VecTask):
         )
         object_palm_diff_in_palm[:, 1] = torch.where(
             object_palm_diff_in_palm[:, 1] < 0,
-            torch.tensor(0.3, dtype=torch.float32, device=self.device),
+            torch.tensor(10.0, dtype=torch.float32, device=self.device),
             object_palm_diff_in_palm[:, 1],
         )
         self.object_palm_dist = torch.norm(object_palm_diff_in_palm, dim=-1)
@@ -994,26 +994,26 @@ class KukaAllegroGrasp(VecTask):
         # Print stats
         # self.print_stats()
 
-        if self.print_success_stat:
-            self.total_resets = self.total_resets + self.reset_buf.sum()
-            direct_average_successes = self.total_successes + self.successes.sum()
-            self.total_successes = (
-                self.total_successes + (self.successes * self.reset_buf).sum()
-            )
+        # if self.print_success_stat:
+        #     self.total_resets = self.total_resets + self.reset_buf.sum()
+        #     direct_average_successes = self.total_successes + self.successes.sum()
+        #     self.total_successes = (
+        #         self.total_successes + (self.successes * self.reset_buf).sum()
+        #     )
 
-            # The direct average shows the overall result more quickly, but slightly undershoots long term
-            # policy performance.
-            print(
-                "Direct average consecutive successes = {:.1f}".format(
-                    direct_average_successes / (self.total_resets + self.num_envs)
-                )
-            )
-            if self.total_resets > 0:
-                print(
-                    "Post-Reset average consecutive successes = {:.1f}".format(
-                        self.total_successes / self.total_resets
-                    )
-                )
+        #     # The direct average shows the overall result more quickly, but slightly undershoots long term
+        #     # policy performance.
+        #     print(
+        #         "Direct average consecutive successes = {:.1f}".format(
+        #             direct_average_successes / (self.total_resets + self.num_envs)
+        #         )
+        #     )
+        #     if self.total_resets > 0:
+        #         print(
+        #             "Post-Reset average consecutive successes = {:.1f}".format(
+        #                 self.total_successes / self.total_resets
+        #             )
+        #         )
 
     def print_stats(self):
         print("=============== ENV STATS ===============")
@@ -1148,7 +1148,7 @@ def compute_grasp_reward(
 
     # Use Distance from the palm to the object
     tgd = torch.clamp(object_palm_dist, min=grasp_dist_tolerance) / grasp_dist_tolerance
-    dist_rew = 1 / tgd * dist_reward_scale - 1.0
+    dist_rew = 1 / tgd * dist_reward_scale
     action_penalty = torch.sum(actions**2, dim=-1) * action_penalty_scale
 
     # Lift reward
