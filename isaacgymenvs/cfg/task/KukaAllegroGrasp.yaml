@@ -5,12 +5,12 @@ physics_engine: 'physx'
 
 # If given, will override the device setting in gym.
 env: 
-  numEnvs: ${resolve_default:16384,${...num_envs}}
+  numEnvs: ${resolve_default:4096,${...num_envs}}
   numObjects: 1
   controlMode: "position"  # "position", "velocity", "effort"
   objectType: 3  # Type of bjects to place in the bin: 0 - box, 1 - meat can, 2 - banana, 3 - mug, 4 - brick, 5 - random
   envSpacing: 1.5
-  episodeLength: 100
+  episodeLength: 200
   enableDebugVis: ${resolve_default:False,${...force_render}}
   aggregateMode: 1
 
@@ -40,12 +40,12 @@ env:
   forceDecayInterval: 0.08
 
   # Reward -> dictionary
-  distRewardScale: 0.1 # -10.0
+  distRewardScale: 10.0 # -10.0
   graspDistTolerance: 0.15
   rotRewardScale: 1.0
   rotEps: 0.1
-  actionPenaltyScale: -0.0002 # -0.0002
-  reachGoalBonus: 3.0
+  actionPenaltyScale: -0.002 # -0.0002
+  reachGoalBonus: 100.0
   awayDistance: 1.0
   awayPenalty: 0.0
   resetStableTime: 100  # Reset will stable after resetStableTime
@@ -175,7 +175,7 @@ task:
             # schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             # schedule_steps: 30000
   goal:
-    random_range: [0.15, 0.05, 0.15]
+    random_range: [0.05, 0.05, 0.05]
 
 sim:
   dt: 0.01667 # 1/60
