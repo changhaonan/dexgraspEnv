@@ -20,13 +20,13 @@ Currently, the grasp reward rescribe the distance between object to finger tip. 
 Train from scratch
 
 ```
-HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp wandb_activate=True wandb_project=KukaAllegroGrasp capture_video=True force_render=False num_envs=2048
+HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp wandb_activate=True wandb_project=KukaAllegroGrasp force_render=False num_envs=2048
 ```
 
 Train from checkpoint
 
 ```
-CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp num_envs=6400 max_iterations=1000 wandb_activate=True wandb_project=KukaAllegroGrasp capture_video=True force_render=False checkpoint=runs/KukaAllegroGrasp/nn/last_KukaAllegroGrasp_ep_500_rew_3.3029275.pth
+CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp num_envs=6400 max_iterations=1000 wandb_activate=True wandb_project=KukaAllegroGrasp force_render=False checkpoint=runs/KukaAllegroGrasp/nn/last_KukaAllegroGrasp_ep_500_rew_3.3029275.pth
 ```
 
 

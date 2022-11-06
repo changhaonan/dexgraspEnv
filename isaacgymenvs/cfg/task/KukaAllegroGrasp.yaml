@@ -45,7 +45,7 @@ env:
   rotRewardScale: 1.0
   rotEps: 0.1
   actionPenaltyScale: -0.002 # -0.0002
-  reachGoalBonus: 100.0
+  reachGoalBonus: 1000.0
   awayDistance: 1.0
   awayPenalty: 0.0
   resetStableTime: 100  # Reset will stable after resetStableTime

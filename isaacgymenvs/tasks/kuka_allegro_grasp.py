@@ -737,9 +737,17 @@ class KukaAllegroGrasp(VecTask):
         )
         self.palm_rot = roma.quat_product(self.wrist_rot, self.palm_rot_offset)
 
-        # Palm reaching reward
+        # Palm reaching reward (Consider orientation)
         object_palm_diff = self.object_pos - self.palm_pos
-        self.object_palm_dist = torch.norm(object_palm_diff, dim=-1)
+        object_palm_diff_in_palm = roma.quat_action(
+            roma.quat_inverse(self.palm_rot), object_palm_diff
+        )
+        object_palm_diff_in_palm[:, 1] = torch.where(
+            object_palm_diff_in_palm[:, 1] < 0,
+            torch.tensor(10.0, dtype=torch.float32, device=self.device),
+            object_palm_diff_in_palm[:, 1],
+        )
+        self.object_palm_dist = torch.norm(object_palm_diff_in_palm, dim=-1)
         # Compute full observation
         self.compute_full_observations()
 
@@ -976,7 +984,7 @@ class KukaAllegroGrasp(VecTask):
         self.extras["consecutive_successes"] = self.consecutive_successes.mean()
 
         # Print stats
-        self.print_stats()
+        # self.print_stats()
 
         if self.print_success_stat:
             self.total_resets = self.total_resets + self.reset_buf.sum()
