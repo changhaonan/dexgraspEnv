@@ -7,8 +7,8 @@ physics_engine: ${..physics_engine}
 env: 
   numEnvs: ${resolve_default:16384,${...num_envs}}
   envSpacing: 0.75
-  episodeLength: 600
-  enableDebugVis: False
+  episodeLength: 300
+  enableDebugVis: ${resolve_default:False,${...force_render}}
   aggregateMode: 1
 
   clipObservations: 5.0
@@ -37,18 +37,18 @@ env:
   forceDecayInterval: 0.08
 
   # reward -> dictionary
-  distRewardScale: -10.0
-  rotRewardScale: 1.0
+  distRewardScale: 10.0
+  rotRewardScale: 0.0  # Ignore the rotation
   rotEps: 0.1
-  actionPenaltyScale: -0.0002
-  reachGoalBonus: 250
-  fallDistance: 0.24
-  fallPenalty: 0.0
+  actionPenaltyScale: -0.002
+  reachGoalBonus: 1000
+  maxDistSlide: 0.1
+  slidePenalty: 0.0
 
-  objectType: "brick" # can be block, egg, pen, can, banana, mug, brick
+  objectType: "mug" # can be block, egg, pen, can, banana, mug, brick
   observationType: "full_state" # can be "no_vel", "full_state"
   asymmetric_observations: False
-  successTolerance: 0.1
+  successTolerance: 0.01
   printNumSuccesses: False
   maxConsecutiveSuccesses: 0
 

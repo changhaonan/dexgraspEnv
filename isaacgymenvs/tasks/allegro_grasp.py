@@ -1,31 +1,3 @@
-# Copyright (c) 2018-2022, NVIDIA Corporation
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice, this
-#    list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-#    this list of conditions and the following disclaimer in the documentation
-#    and/or other materials provided with the distribution.
-#
-# 3. Neither the name of the copyright holder nor the names of its
-#    contributors may be used to endorse or promote products derived from
-#    this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 import numpy as np
 import os
 import torch
@@ -33,8 +5,9 @@ import torch
 from isaacgym import gymtorch
 from isaacgym import gymapi
 from isaacgym.torch_utils import *
-
 from isaacgymenvs.tasks.base.vec_task import VecTask
+from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_3D_pose, draw_bbox
+from isaacgymenvs.utils.dexgrasp.reward_utils import compute_pickup_reward
 
 
 class AllegroGrasp(VecTask):
@@ -50,8 +23,8 @@ class AllegroGrasp(VecTask):
         self.action_penalty_scale = self.cfg["env"]["actionPenaltyScale"]
         self.success_tolerance = self.cfg["env"]["successTolerance"]
         self.reach_goal_bonus = self.cfg["env"]["reachGoalBonus"]
-        self.fall_dist = self.cfg["env"]["fallDistance"]
-        self.fall_penalty = self.cfg["env"]["fallPenalty"]
+        self.slide_penalty = self.cfg["env"]["slidePenalty"]
+        self.max_dist_slide = self.cfg["env"]["maxDistSlide"]
         self.rot_eps = self.cfg["env"]["rotEps"]
 
         self.vel_obs_scale = 0.2  # scale factor of velocity based observations
@@ -81,11 +54,8 @@ class AllegroGrasp(VecTask):
 
         self.object_type = self.cfg["env"]["objectType"]
         assert self.object_type in ["block", "egg", "pen", "can", "banana", "mug", "brick"]
-
         self.ignore_z = (self.object_type == "pen")
-
         self.asset_files_dict = {}
-
         if "asset" in self.cfg["env"]:
             self.asset_files_dict["block"] = self.cfg["env"]["asset"].get("assetFileNameBlock")
             self.asset_files_dict["egg"] = self.cfg["env"]["asset"].get("assetFileNameEgg")
@@ -193,6 +163,9 @@ class AllegroGrasp(VecTask):
 
         self.rb_forces = torch.zeros((self.num_envs, self.num_bodies, 3), dtype=torch.float, device=self.device)
 
+        # allocate buffer
+        self.goal_dist_buf = torch.zeros((self.num_envs, 1), dtype=torch.float, device=self.device)
+
     def create_sim(self):
         self.dt = self.sim_params.dt
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -219,7 +192,6 @@ class AllegroGrasp(VecTask):
 
         object_asset_file = self.asset_files_dict[self.object_type]
         
-
         # load table asset
         table_asset_options = gymapi.AssetOptions()
         table_asset_options.armature = 0.001
@@ -273,7 +245,7 @@ class AllegroGrasp(VecTask):
             self.shadow_hand_dof_default_pos.append(0.0)
             self.shadow_hand_dof_default_vel.append(0.0)
 
-            print("Max effort: ", shadow_hand_dof_props['effort'][i])
+            # print("Max effort: ", shadow_hand_dof_props['effort'][i])
             shadow_hand_dof_props['effort'][i] = 0.5
             shadow_hand_dof_props['stiffness'][i] = 3
             shadow_hand_dof_props['damping'][i] = 0.1
@@ -294,13 +266,13 @@ class AllegroGrasp(VecTask):
         goal_asset = self.gym.load_asset(self.sim, asset_root, object_asset_file, object_asset_options)
 
         shadow_hand_start_pose = gymapi.Transform()
-        shadow_hand_start_pose.p = gymapi.Vec3(*get_axis_params(0.5, self.up_axis_idx))
-        shadow_hand_start_pose.r = gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 1, 0), np.pi) * gymapi.Quat.from_axis_angle(gymapi.Vec3(1, 0, 0), 0.47 * np.pi) * gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 0, 1), 0.25 * np.pi)
+        shadow_hand_start_pose.p = gymapi.Vec3(*get_axis_params(0.57, self.up_axis_idx))
+        shadow_hand_start_pose.r = gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 1, 0), 0) * gymapi.Quat.from_axis_angle(gymapi.Vec3(1, 0, 0), 0.47 * np.pi) * gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 0, 1), 0.25 * np.pi)
 
         object_start_pose = gymapi.Transform()
         object_start_pose.p = gymapi.Vec3()
         object_start_pose.p.x = shadow_hand_start_pose.p.x
-        pose_dy, pose_dz = -0.2, 0.06
+        pose_dy, pose_dz = -0.12, -0.10
 
         object_start_pose.p.y = shadow_hand_start_pose.p.y + pose_dy
         object_start_pose.p.z = shadow_hand_start_pose.p.z + pose_dz
@@ -397,7 +369,7 @@ class AllegroGrasp(VecTask):
 
         self.object_init_state = to_torch(self.object_init_state, device=self.device, dtype=torch.float).view(self.num_envs, 13)
         self.goal_states = self.object_init_state.clone()
-        self.goal_states[:, self.up_axis_idx] -= 0.04
+        self.goal_states[:, self.up_axis_idx] += 0.04  # goal pos is higher than init
         self.goal_init_state = self.goal_states.clone()
         self.hand_start_states = to_torch(self.hand_start_states, device=self.device).view(self.num_envs, 13)
 
@@ -410,12 +382,12 @@ class AllegroGrasp(VecTask):
         self.goal_object_indices = to_torch(self.goal_object_indices, dtype=torch.long, device=self.device)
 
     def compute_reward(self, actions):
-        self.rew_buf[:], self.reset_buf[:], self.reset_goal_buf[:], self.progress_buf[:], self.successes[:], self.consecutive_successes[:] = compute_hand_reward(
-            self.rew_buf, self.reset_buf, self.reset_goal_buf, self.progress_buf, self.successes, self.consecutive_successes,
-            self.max_episode_length, self.object_pos, self.object_rot, self.goal_pos, self.goal_rot,
-            self.dist_reward_scale, self.rot_reward_scale, self.rot_eps, self.actions, self.action_penalty_scale,
-            self.success_tolerance, self.reach_goal_bonus, self.fall_dist, self.fall_penalty,
-            self.max_consecutive_successes, self.av_factor, (self.object_type == "pen")
+        self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.goal_dist_buf = compute_pickup_reward(
+            self.rew_buf, self.reset_buf, self.progress_buf, self.successes,
+            self.max_episode_length, self.object_pos, self.goal_pos,
+            self.dist_reward_scale, self.actions, self.action_penalty_scale,
+            self.success_tolerance, self.reach_goal_bonus, 
+            self.max_dist_slide, self.slide_penalty
         )
 
         self.extras['consecutive_successes'] = self.consecutive_successes.mean()
@@ -651,6 +623,8 @@ class AllegroGrasp(VecTask):
         if len(env_ids) > 0:
             self.reset_idx(env_ids, goal_env_ids)
 
+        # set action to 0
+        # self.actions = torch.ones_like(actions).to(self.device) * -0.3
         self.actions = actions.clone().to(self.device)
         if self.use_relative_control:
             targets = self.prev_targets[:, self.actuated_dof_indices] + self.shadow_hand_dof_speed_scale * self.dt * self.actions
@@ -683,95 +657,50 @@ class AllegroGrasp(VecTask):
 
         self.compute_observations()
         self.compute_reward(self.actions)
+        self.log_metric()
 
         if self.viewer and self.debug_viz:
-            # draw axes on target object
-            self.gym.clear_lines(self.viewer)
-            self.gym.refresh_rigid_body_state_tensor(self.sim)
+            self.draw_auxilary()
 
-            for i in range(self.num_envs):
-                targetx = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
-                targety = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
-                targetz = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
+    def draw_auxilary(self):
+        # draw axes on target object
+        self.gym.clear_lines(self.viewer)
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
 
-                p0 = self.goal_pos[i].cpu().numpy() + self.goal_displacement_tensor.cpu().numpy()
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetx[0], targetx[1], targetx[2]], [0.85, 0.1, 0.1])
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targety[0], targety[1], targety[2]], [0.1, 0.85, 0.1])
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetz[0], targetz[1], targetz[2]], [0.1, 0.1, 0.85])
+        for i in range(self.num_envs):
+            targetx = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
+            targety = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
+            targetz = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
 
-                objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
-                objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
-                objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
+            # p0 = self.goal_pos[i].cpu().numpy() + self.goal_displacement_tensor.cpu().numpy()
+            p0 = self.goal_pos[i].cpu().numpy() 
+            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetx[0], targetx[1], targetx[2]], [0.85, 0.1, 0.1])
+            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targety[0], targety[1], targety[2]], [0.1, 0.85, 0.1])
+            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetz[0], targetz[1], targetz[2]], [0.1, 0.1, 0.85])
 
-                p0 = self.object_pos[i].cpu().numpy()
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
-                self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
+            objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
+            objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
+            objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
 
+            p0 = self.object_pos[i].cpu().numpy()
+            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
+            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
+            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
+
+            # draw init state
+            draw_6D_pose(self.gym, self.viewer, self.envs[i], self.object_init_state[i, 0:3].cpu().numpy(), self.object_init_state[i, 3:7].cpu().numpy(), 
+                sphere_radius=0.01, color=(0, 1, 0))
+
+            # draw target
+            draw_6D_pose(self.gym, self.viewer, self.envs[i], self.goal_pos[i].cpu().numpy(), self.goal_rot[i].cpu().numpy(), sphere_radius=0.01, 
+                color=(0, 0, 1))
+
+    def log_metric(self):
+        for idx in range(min(self.num_envs, 4)):
+            print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
 #####################################################################
 ###=========================jit functions=========================###
 #####################################################################
-
-
-@torch.jit.script
-def compute_hand_reward(
-    rew_buf, reset_buf, reset_goal_buf, progress_buf, successes, consecutive_successes,
-    max_episode_length: float, object_pos, object_rot, target_pos, target_rot,
-    dist_reward_scale: float, rot_reward_scale: float, rot_eps: float,
-    actions, action_penalty_scale: float,
-    success_tolerance: float, reach_goal_bonus: float, fall_dist: float,
-    fall_penalty: float, max_consecutive_successes: int, av_factor: float, ignore_z_rot: bool
-):
-    # Distance from the hand to the object
-    goal_dist = torch.norm(object_pos - target_pos, p=2, dim=-1)
-
-    if ignore_z_rot:
-        success_tolerance = 2.0 * success_tolerance
-
-    # Orientation alignment for the cube in hand and goal cube
-    quat_diff = quat_mul(object_rot, quat_conjugate(target_rot))
-    rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 0:3], p=2, dim=-1), max=1.0))
-
-    dist_rew = goal_dist * dist_reward_scale
-    rot_rew = 1.0/(torch.abs(rot_dist) + rot_eps) * rot_reward_scale
-
-    action_penalty = torch.sum(actions ** 2, dim=-1)
-
-    # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
-    reward = dist_rew + rot_rew + action_penalty * action_penalty_scale
-
-    # Find out which envs hit the goal and update successes count
-    goal_resets = torch.where(torch.abs(rot_dist) <= success_tolerance, torch.ones_like(reset_goal_buf), reset_goal_buf)
-    successes = successes + goal_resets
-
-    # Success bonus: orientation is within `success_tolerance` of goal orientation
-    reward = torch.where(goal_resets == 1, reward + reach_goal_bonus, reward)
-
-    # Fall penalty: distance to the goal is larger than a threshold
-    reward = torch.where(goal_dist >= fall_dist, reward + fall_penalty, reward)
-
-    # Check env termination conditions, including maximum success number
-    resets = torch.where(goal_dist >= fall_dist, torch.ones_like(reset_buf), reset_buf)
-    if max_consecutive_successes > 0:
-        # Reset progress buffer on goal envs if max_consecutive_successes > 0
-        progress_buf = torch.where(torch.abs(rot_dist) <= success_tolerance, torch.zeros_like(progress_buf), progress_buf)
-        resets = torch.where(successes >= max_consecutive_successes, torch.ones_like(resets), resets)
-
-    timed_out = progress_buf >= max_episode_length - 1
-    resets = torch.where(timed_out, torch.ones_like(resets), resets)
-
-    # Apply penalty for not reaching the goal
-    if max_consecutive_successes > 0:
-        reward = torch.where(timed_out, reward + 0.5 * fall_penalty, reward)
-
-    num_resets = torch.sum(resets)
-    finished_cons_successes = torch.sum(successes * resets.float())
-
-    cons_successes = torch.where(num_resets > 0, av_factor*finished_cons_successes/num_resets + (1.0 - av_factor)*consecutive_successes, consecutive_successes)
-
-    return reward, resets, goal_resets, progress_buf, successes, cons_successes
-
-
 @torch.jit.script
 def randomize_rotation(rand0, rand1, x_unit_tensor, y_unit_tensor):
     return quat_mul(quat_from_angle_axis(rand0 * np.pi, x_unit_tensor),

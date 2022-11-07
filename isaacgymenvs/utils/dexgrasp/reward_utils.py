@@ -1,4 +1,5 @@
 import torch
+from isaacgym.torch_utils import *
 import roma
 
 
@@ -99,3 +100,40 @@ def compute_grasp_reward_v2(
         r_goal,
         r_finger_contact,
     )
+
+
+@torch.jit.script
+def compute_pickup_reward(
+    rew_buf, reset_buf, progress_buf, successes,
+    max_episode_length: float, object_pos, target_pos,
+    dist_reward_scale: float,
+    actions, action_penalty_scale: float,
+    success_tolerance: float, reach_goal_bonus: float,
+    max_dist_slide: float, slide_penalty: float
+):
+    # Distance from the hand to the object
+    goal_dist = torch.norm(object_pos - target_pos, p=2, dim=-1)
+    dist_rew = success_tolerance/torch.clamp(goal_dist, min=success_tolerance) * dist_reward_scale
+
+    action_penalty = torch.sum(actions ** 2, dim=-1)
+
+    # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
+    reward = dist_rew + action_penalty * action_penalty_scale
+
+    # Find out which envs hit the goal and update successes count and resets
+    reach_goal = torch.where(goal_dist <= success_tolerance, torch.ones_like(reset_buf), reset_buf)
+    successes = successes + reach_goal
+    resets = torch.where(reach_goal == 1, torch.ones_like(reset_buf), reset_buf)
+
+    # Success bonus: reach the
+    reward = torch.where(reach_goal == 1, reward + reach_goal_bonus, reward)
+    
+    # Check if the object slide from hand too far
+    resets = torch.where(goal_dist > max_dist_slide, torch.ones_like(resets), resets)
+    reward = torch.where(goal_dist > max_dist_slide, reward + slide_penalty, reward)
+
+    # Timeout resets
+    timed_out = progress_buf >= max_episode_length - 1
+    resets = torch.where(timed_out, torch.ones_like(resets), resets)
+
+    return reward, resets, progress_buf, successes, goal_dist
