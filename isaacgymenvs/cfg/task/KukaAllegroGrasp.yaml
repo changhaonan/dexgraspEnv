@@ -10,7 +10,7 @@ env:
   controlMode: "position"  # "position", "velocity", "effort"
   objectType: 3  # Type of bjects to place in the bin: 0 - box, 1 - meat can, 2 - banana, 3 - mug, 4 - brick, 5 - random
   envSpacing: 1.5
-  episodeLength: 200
+  episodeLength: 250
   enableDebugVis: ${resolve_default:False,${...force_render}}
   aggregateMode: 1
 
@@ -40,20 +40,15 @@ env:
   forceDecayInterval: 0.08
 
   # Reward -> dictionary
-  distRewardScale: 10.0 # -10.0
-  distGraspPalmTolerance: 0.15
+  distGraspPalmTolerance: 0.2
   distGraspFingerTolerance: 0.1
-  distGoalTolerance: 0.01
-  coefPalm: 1.0
-  coefGoal: 1.0
-  coefHandOpenPenalty: -0.1
+  distGoalTolerance: 0.1
+  coefPalm: 10.0
+  coefGoal: 10.0
+  coefHandOpenPenalty: -0.3
   coefActionPenalty: -0.002 # -0.0002
-  coefFingerContact: 1.0
+  coefFingerContact: 10.0
   reachGoalBonus: 1000.0
-  awayDistance: 1.0
-  awayPenalty: 0.0
-  resetStableTime: 100  # Reset will stable after resetStableTime
-  liftRewardScale: 10.0
 
   observationType: "full_state" #"openai" # can be "openai", "full_no_vel", "full", "full_state"
   asymmetric_observations: False

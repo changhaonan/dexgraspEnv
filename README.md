@@ -26,12 +26,13 @@ HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp 
 Train from checkpoint
 
 ```
-CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp num_envs=6400 max_iterations=1000 wandb_activate=True wandb_project=KukaAllegroGrasp force_render=False checkpoint=runs/KukaAllegroGrasp/nn/last_KukaAllegroGrasp_ep_500_rew_3.3029275.pth
+HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp wandb_activate=True wandb_project=KukaAllegroGrasp force_render=False num_envs=2048 checkpoint=runs/KukaAllegroGrasp/nn/KukaAllegroGrasp.pth max_iterations=4000
 ```
 
 
 ## Trouble shooting
-
-### Video Recording 
-
 Gym 2.6.0 has some bugs in video recording. Use Gym 2.3.0
+
+## TODO:
+
+IK: franka_cube_stack.py, Factory_control.py

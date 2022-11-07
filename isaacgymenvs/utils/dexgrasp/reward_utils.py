@@ -2,7 +2,7 @@ import torch
 import roma
 
 
-# @torch.jit.script
+@torch.jit.script
 def compute_grasp_reward_v2(
     rew_buf,
     reset_buf,
@@ -34,12 +34,12 @@ def compute_grasp_reward_v2(
     )
 
     # 1. Phase zero: approach the object
-    # r_palm: Distance from the palm to the object
+    # r_palm: Distance from the palm to the object, a constant reward
     r_palm = (
         dist_grasp_palm_tol / torch.clamp(dist_object_palm, min=dist_grasp_palm_tol)
         - 1.0
     ) * coef_palm
-    r_palm = torch.where(phase_grasp == 1, torch.zeros_like(r_palm), r_palm)
+    # r_palm = torch.where(phase_grasp == 1, torch.zeros_like(r_palm), r_palm)
 
     # r_hand_open: Make hand joint close to 0. This is a penalty
     r_hand_open = torch.norm(hand_joint_pos, p=2, dim=-1) * coef_hand_open_penalty
@@ -55,14 +55,14 @@ def compute_grasp_reward_v2(
 
     # r_finger_contact: Make the fingers close to the object
     # This term is always positive, serverd as a bonus
-    dist_finger_contact = (
-        torch.norm(fingertip_pos - object_pos.repeat(1, 4).reshape(-1, 3), p=2, dim=-1)
-        .reshape(-1, 4)
-        .mean(dim=-1)
-    )
+    dist_finger_contact = torch.norm(
+        fingertip_pos - object_pos.repeat(1, 4).reshape(-1, 3), p=2, dim=-1
+    ).reshape(-1, 4)
+    dist_finger_contact[:, 0] = dist_finger_contact[:, 0] * 2.0  # Amplify the thumb dist
+
     r_finger_contact = (
         dist_grasp_finger_tol
-        / torch.clamp(dist_finger_contact, min=dist_grasp_finger_tol)
+        / torch.clamp(dist_finger_contact.mean(dim=-1), min=dist_grasp_finger_tol)
         * coef_finger_contact
     )
     r_finger_contact = torch.where(

@@ -58,11 +58,6 @@ class KukaAllegroGrasp(VecTask):
 
         self.reach_goal_bonus = self.cfg["env"]["reachGoalBonus"]
 
-        self.away_dist = self.cfg["env"]["awayDistance"]
-        self.away_penalty = self.cfg["env"]["awayPenalty"]
-        self.reset_stable_time = self.cfg["env"]["resetStableTime"]
-        self.lift_reward_scale = self.cfg["env"]["liftRewardScale"]
-
         self.vel_obs_scale = 0.2  # Scale factor of velocity based observations
         self.force_torque_obs_scale = (
             10.0  # Scale factor of velocity based observations
