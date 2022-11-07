@@ -7,15 +7,15 @@ from isaacgym import gymapi
 from isaacgym.torch_utils import *
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_3D_pose, draw_bbox
-from isaacgymenvs.utils.dexgrasp.reward_utils import compute_pickup_reward
+from isaacgymenvs.utils.dexgrasp.reward_utils import compute_pickup_reward, compute_reorient_reward
 
 
-class AllegroGrasp(VecTask):
+class AllegroManip(VecTask):
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
 
         self.cfg = cfg
-
+        self.manipulate_mode = cfg["env"]["manipulateMode"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
 
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
@@ -164,7 +164,8 @@ class AllegroGrasp(VecTask):
         self.rb_forces = torch.zeros((self.num_envs, self.num_bodies, 3), dtype=torch.float, device=self.device)
 
         # allocate buffer
-        self.goal_dist_buf = torch.zeros((self.num_envs, 1), dtype=torch.float, device=self.device)
+        self.goal_dist_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
+        self.rot_dist_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
 
     def create_sim(self):
         self.dt = self.sim_params.dt
@@ -382,13 +383,22 @@ class AllegroGrasp(VecTask):
         self.goal_object_indices = to_torch(self.goal_object_indices, dtype=torch.long, device=self.device)
 
     def compute_reward(self, actions):
-        self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.goal_dist_buf = compute_pickup_reward(
-            self.rew_buf, self.reset_buf, self.progress_buf, self.successes,
-            self.max_episode_length, self.object_pos, self.goal_pos,
-            self.dist_reward_scale, self.actions, self.action_penalty_scale,
-            self.success_tolerance, self.reach_goal_bonus, 
-            self.max_dist_slide, self.slide_penalty
-        )
+        if self.manipulate_mode == "pickup":
+            self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.goal_dist_buf = compute_pickup_reward(
+                self.rew_buf, self.reset_buf, self.progress_buf, self.successes,
+                self.max_episode_length, self.object_pos, self.goal_pos,
+                self.dist_reward_scale, self.actions, self.action_penalty_scale,
+                self.success_tolerance, self.reach_goal_bonus, 
+                self.max_dist_slide, self.slide_penalty
+            )
+        elif self.manipulate_mode == "reorient":
+            self.rew_buf[:], self.reset_buf[:], self.reset_goal_buf[:], self.progress_buf[:], self.successes[:], self.consecutive_successes[:], self.goal_dist_buf[:], self.rot_dist_buf[:] = compute_reorient_reward(
+                self.rew_buf, self.reset_buf, self.reset_goal_buf, self.progress_buf, self.successes, self.consecutive_successes,
+                self.max_episode_length, self.object_pos, self.object_rot, self.goal_pos, self.goal_rot,
+                self.dist_reward_scale, self.rot_reward_scale, self.rot_eps, self.actions, self.action_penalty_scale,
+                self.success_tolerance, self.reach_goal_bonus, self.max_dist_slide, self.slide_penalty,
+                self.max_consecutive_successes, self.av_factor, (self.object_type == "pen")
+            )
 
         self.extras['consecutive_successes'] = self.consecutive_successes.mean()
 
@@ -697,7 +707,11 @@ class AllegroGrasp(VecTask):
 
     def log_metric(self):
         for idx in range(min(self.num_envs, 4)):
-            print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
+            if self.manipulate_mode == "pickup":
+                print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
+            elif self.manipulate_mode == "reorient":
+                print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, rot_dist: {self.rot_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
+
 #####################################################################
 ###=========================jit functions=========================###
 #####################################################################

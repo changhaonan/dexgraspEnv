@@ -1,5 +1,5 @@
 # used to create the object
-name: AllegroGrasp
+name: AllegroManip
 
 physics_engine: ${..physics_engine}
 
@@ -30,6 +30,9 @@ env:
   resetDofPosRandomInterval: 0.2
   resetDofVelRandomInterval: 0.0
 
+  # manipulate mode
+  manipulateMode: "reorient"  # pickup, reorient, hold
+
   # Random forces applied to the object
   forceScale: 0.0
   forceProbRange: [0.001, 0.1]
@@ -37,8 +40,8 @@ env:
   forceDecayInterval: 0.08
 
   # reward -> dictionary
-  distRewardScale: 10.0
-  rotRewardScale: 0.0  # Ignore the rotation
+  distRewardScale: -10.0
+  rotRewardScale: 1.0  # Ignore the rotation
   rotEps: 0.1
   actionPenaltyScale: -0.002
   reachGoalBonus: 1000
@@ -48,7 +51,7 @@ env:
   objectType: "mug" # can be block, egg, pen, can, banana, mug, brick
   observationType: "full_state" # can be "no_vel", "full_state"
   asymmetric_observations: False
-  successTolerance: 0.01
+  successTolerance: 0.1
   printNumSuccesses: False
   maxConsecutiveSuccesses: 0
 
