@@ -20,7 +20,7 @@ Currently, the grasp reward rescribe the distance between object to finger tip. 
 Train from scratch
 
 ```
-HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp wandb_activate=True wandb_project=KukaAllegroGrasp force_render=False num_envs=2048
+HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=KukaAllegroGrasp wandb_activate=True wandb_project=KukaAllegroGrasp force_render=False num_envs=2048 max_iterations=4000
 ```
 
 Train from checkpoint
@@ -36,3 +36,6 @@ Gym 2.6.0 has some bugs in video recording. Use Gym 2.3.0
 ## TODO:
 
 IK: franka_cube_stack.py, Factory_control.py
+
+Check this file: https://www.cs.cmu.edu/~15464-s13/lectures/lecture6/iksurvey.pdf
+
