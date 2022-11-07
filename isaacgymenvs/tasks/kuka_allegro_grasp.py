@@ -18,6 +18,7 @@ from isaacgymenvs.utils.reformat import omegaconf_to_dict
 
 import torch
 import roma
+import wandb
 
 from isaacgymenvs.utils.dexgrasp.math_utils import quaternion_mul
 from isaacgymenvs.utils.dexgrasp.drawing_utils import (
@@ -25,6 +26,7 @@ from isaacgymenvs.utils.dexgrasp.drawing_utils import (
     draw_3D_pose,
     draw_bbox,
 )
+from isaacgymenvs.utils.dexgrasp.reward_utils import compute_grasp_reward_v2
 
 
 class KukaAllegroGrasp(VecTask):
@@ -44,15 +46,20 @@ class KukaAllegroGrasp(VecTask):
         self.cfg = cfg
 
         # Reward related
-        self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
-        self.grasp_dist_tolerance = self.cfg["env"]["graspDistTolerance"]
-        self.rot_reward_scale = self.cfg["env"]["rotRewardScale"]
-        self.action_penalty_scale = self.cfg["env"]["actionPenaltyScale"]
-        self.success_tolerance = self.cfg["env"]["successTolerance"]
+        self.dist_grasp_palm_tol = self.cfg["env"]["distGraspPalmTolerance"]
+        self.dist_grasp_finger_tol = self.cfg["env"]["distGraspFingerTolerance"]
+        self.dist_goal_tol = self.cfg["env"]["distGoalTolerance"]
+
+        self.coef_palm = self.cfg["env"]["coefPalm"]
+        self.coef_goal = self.cfg["env"]["coefGoal"]
+        self.coef_hand_open_penalty = self.cfg["env"]["coefHandOpenPenalty"]
+        self.coef_action_penalty = self.cfg["env"]["coefActionPenalty"]
+        self.coef_finger_contact = self.cfg["env"]["coefFingerContact"]
+
         self.reach_goal_bonus = self.cfg["env"]["reachGoalBonus"]
+
         self.away_dist = self.cfg["env"]["awayDistance"]
         self.away_penalty = self.cfg["env"]["awayPenalty"]
-        self.rot_eps = self.cfg["env"]["rotEps"]
         self.reset_stable_time = self.cfg["env"]["resetStableTime"]
         self.lift_reward_scale = self.cfg["env"]["liftRewardScale"]
 
@@ -173,6 +180,23 @@ class KukaAllegroGrasp(VecTask):
         self.z_unit_tensor = to_torch(
             [0, 0, 1], dtype=torch.float, device=self.device
         ).repeat((self.num_envs, 1))
+
+        # Allocate buffer
+        self.r_palm_buf = torch.zeros(
+            (self.num_envs), device=self.device, dtype=torch.float
+        )
+        self.r_hand_open_buf = torch.zeros(
+            (self.num_envs), device=self.device, dtype=torch.float
+        )
+        self.r_goal_buf = torch.zeros(
+            (self.num_envs), device=self.device, dtype=torch.float
+        )
+        self.r_finger_contact_buf = torch.zeros(
+            (self.num_envs), device=self.device, dtype=torch.float
+        )
+        self.phase_grasp_buf = torch.zeros(
+            (self.num_envs), device=self.device, dtype=torch.float
+        )
 
     def create_sim(self):
         self.sim = super().create_sim(
@@ -508,6 +532,8 @@ class KukaAllegroGrasp(VecTask):
         )
 
     def reset_target(self, env_ids):
+        target_y_offset = 0.3
+
         # Random rot
         rand_floats = torch_rand_float(-1.0, 1.0, (len(env_ids), 2), device=self.device)
         new_rot = randomize_rotation(
@@ -524,7 +550,7 @@ class KukaAllegroGrasp(VecTask):
         rand_y = (
             torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device)
             * self.goal_random_range[1]
-        )
+        ) + target_y_offset
         rand_z = (
             torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device)
             * self.goal_random_range[2]
@@ -700,7 +726,7 @@ class KukaAllegroGrasp(VecTask):
         self.progress_buf += 1
         self.randomize_buf += 1
         self.compute_observations()
-        self.compute_reward_v2()  # V2 is grasp, V1 is pickup
+        self.compute_reward()  # V2 is grasp, V1 is pickup
         if self.debug_viz:
             self.draw_auxiliary()
 
@@ -726,6 +752,9 @@ class KukaAllegroGrasp(VecTask):
         self.goal_pos = self.goal_states[:, :3]
         self.goal_rot = self.goal_states[:, 3:7]
 
+        # Hand joint position
+        self.hand_joint_pos = self.kuka_dof_pos[:, 7:23]
+
         # Fingertip-observation
         self.fingertip_pos = self.rigid_body_states[self.fingertips_indices, 0:3]
 
@@ -747,7 +776,7 @@ class KukaAllegroGrasp(VecTask):
             torch.tensor(10.0, dtype=torch.float32, device=self.device),
             object_palm_diff_in_palm[:, 1],
         )
-        self.object_palm_dist = torch.norm(object_palm_diff_in_palm, dim=-1)
+        self.dist_object_palm = torch.norm(object_palm_diff_in_palm, dim=-1)
         # Compute full observation
         self.compute_full_observations()
 
@@ -885,7 +914,7 @@ class KukaAllegroGrasp(VecTask):
                 color=(0, 1, 0),
             )
 
-    def compute_reward_v2(self):
+    def compute_reward(self):
         object_pos_rep = self.object_pos.repeat(1, self.num_fingertips).view(
             self.num_envs, -1
         )
@@ -897,35 +926,39 @@ class KukaAllegroGrasp(VecTask):
             self.reset_goal_buf[:],
             self.progress_buf[:],
             self.successes[:],
-        ) = compute_grasp_reward(
+            self.phase_grasp_buf[:],
+            self.r_palm_buf[:],
+            self.r_hand_open_buf[:],
+            self.r_goal_buf[:],
+            self.r_finger_contact_buf[:],
+        ) = compute_grasp_reward_v2(
             self.rew_buf,
             self.reset_buf,
             self.progress_buf,
             self.successes,
-            self.consecutive_successes,
             self.max_episode_length,
-            self.reset_stable_time,
-            object_pos_rep,
-            self.object_prev_pos,
-            fingertip_pos_view,
-            self.object_palm_dist,
-            self.dist_reward_scale,
-            self.grasp_dist_tolerance,
-            self.lift_reward_scale,
+            self.object_pos,
+            self.goal_pos,
+            self.hand_joint_pos,
+            self.fingertip_pos,
             self.actions,
-            self.action_penalty_scale,
-            self.success_tolerance,
+            self.dist_object_palm,
+            self.dist_grasp_palm_tol,
+            self.dist_grasp_finger_tol,
+            self.dist_goal_tol,
             self.reach_goal_bonus,
-            self.away_dist,  # Use fall as away for now
-            self.away_penalty,
-            self.max_consecutive_successes,
+            self.coef_palm,
+            self.coef_goal,
+            self.coef_hand_open_penalty,
+            self.coef_action_penalty,
+            self.coef_finger_contact,
             self.av_factor,
         )
 
         self.extras["consecutive_successes"] = self.consecutive_successes.mean()
 
         # Print stats
-        # self.print_stats()
+        self.log_wandb()
 
         if self.print_success_stat:
             self.total_resets = self.total_resets + self.reset_buf.sum()
@@ -938,82 +971,26 @@ class KukaAllegroGrasp(VecTask):
                     )
                 )
 
-    def print_stats(self):
+    def log_wandb(self):
         print("=============== ENV STATS ===============")
-        for env_idx in range(self.num_envs):
+        for env_idx in range(min(4, self.num_envs)):
             print(
-                f"Env {env_idx}: reward = {self.rew_buf[env_idx]}, progress = {self.progress_buf[env_idx]}",
-                f"successes = {self.successes[env_idx]}, reset = {self.reset_buf[env_idx]}.",
+                f"Env {env_idx}:",
+                f"rew = {self.rew_buf[env_idx]},",
+                f"r_palm = {self.r_palm_buf[env_idx]},",
+                f"r_hand_open = {self.r_hand_open_buf[env_idx]},",
+                f"r_goal = {self.r_goal_buf[env_idx]},",
+                f"r_finger_contact = {self.r_finger_contact_buf[env_idx]},",
+                f"prog = {self.progress_buf[env_idx]},",
+                f"phase = {self.phase_grasp_buf[env_idx]},",
+                f"succ = {self.successes[env_idx]},",
+                f"reset = {self.reset_buf[env_idx]}.",
             )
 
+        # Log stats to wandb
+        # wandb.log()
 
-#####################################################################
-###=========================jit functions=========================###
-#####################################################################
-@torch.jit.script
-def compute_grasp_reward(
-    rew_buf,
-    reset_buf,
-    progress_buf,
-    successes,
-    consecutive_successes,
-    max_episode_length: int,
-    reset_stable_time: int,
-    object_pos_rep,
-    object_prev_pos,
-    fingertip_pos,
-    object_palm_dist,
-    dist_reward_scale: float,
-    grasp_dist_tolerance: float,
-    lift_reward_scale: float,
-    actions,
-    action_penalty_scale: float,
-    success_tolerance: float,
-    reach_goal_bonus: float,
-    away_dist: float,
-    away_penalty: float,
-    max_consecutive_successes: int,
-    av_factor,
-):
-    # Distance from the fingertips to the object
-    # Attracting fingertips to the object
-    # TGD: short for truncated grasp distance
-    # grasp_dist = torch.norm(object_pos_rep - fingertip_pos, p=2, dim=-1)
-
-    # Use Distance from the palm to the object
-    tgd = torch.clamp(object_palm_dist, min=grasp_dist_tolerance) / grasp_dist_tolerance
-    dist_rew = 1 / tgd * dist_reward_scale
-    action_penalty = torch.sum(actions**2, dim=-1) * action_penalty_scale
-
-    # Lift reward
-    # Evaluating if the object is lifted after reset is stabled
-    lift_dist = object_pos_rep[:, 1] - object_prev_pos[:, 1]
-    lif_rew = lift_dist * lift_reward_scale
-    lif_rew = torch.where(
-        progress_buf >= reset_stable_time, lif_rew, torch.zeros_like(lif_rew)
-    )
-
-    # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
-    reward = dist_rew + lif_rew + action_penalty
-
-    # Sucess resets
-    success_resets = torch.where(
-        torch.abs(object_palm_dist) <= grasp_dist_tolerance,
-        torch.ones_like(reset_buf),
-        reset_buf,
-    )
-    successes = successes + success_resets
-
-    # Reach bonus: object-plam is close enough to the object
-    reward = torch.where(success_resets == 1, reward + reach_goal_bonus, reward)
-
-    # Timeout resets
-    timed_out = progress_buf >= max_episode_length - 1
-    resets = torch.where(timed_out, torch.ones_like(success_resets), success_resets)
-
-    return reward, resets, success_resets, progress_buf, successes
-
-
+# JIT Script
 @torch.jit.script
 def randomize_rotation(rand0, rand1, x_unit_tensor, y_unit_tensor):
     return quat_mul(

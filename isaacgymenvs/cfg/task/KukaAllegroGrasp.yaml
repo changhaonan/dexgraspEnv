@@ -41,10 +41,14 @@ env:
 
   # Reward -> dictionary
   distRewardScale: 10.0 # -10.0
-  graspDistTolerance: 0.15
-  rotRewardScale: 1.0
-  rotEps: 0.1
-  actionPenaltyScale: -0.002 # -0.0002
+  distGraspPalmTolerance: 0.15
+  distGraspFingerTolerance: 0.1
+  distGoalTolerance: 0.01
+  coefPalm: 1.0
+  coefGoal: 1.0
+  coefHandOpenPenalty: -0.1
+  coefActionPenalty: -0.002 # -0.0002
+  coefFingerContact: 1.0
   reachGoalBonus: 1000.0
   awayDistance: 1.0
   awayPenalty: 0.0
