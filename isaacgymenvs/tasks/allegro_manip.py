@@ -167,6 +167,11 @@ class AllegroManip(VecTask):
         self.goal_dist_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
         self.rot_dist_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
 
+        # set camera
+        cam_pos = gymapi.Vec3(0.6, -0.6, 0.7)
+        cam_target = gymapi.Vec3(0.0, 0.0, 0.5)
+        self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
+
     def create_sim(self):
         self.dt = self.sim_params.dt
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
