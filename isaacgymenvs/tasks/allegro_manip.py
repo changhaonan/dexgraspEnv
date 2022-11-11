@@ -7,7 +7,7 @@ from isaacgym import gymapi
 from isaacgym.torch_utils import *
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_3D_pose, draw_bbox
-from isaacgymenvs.utils.dexgrasp.reward_utils import compute_pickup_reward, compute_reorient_reward
+from isaacgymenvs.utils.dexgrasp.reward_utils import compute_pickup_reward, compute_reorient_reward, compute_hold_reward
 
 
 class AllegroManip(VecTask):
@@ -18,10 +18,19 @@ class AllegroManip(VecTask):
         self.manipulate_mode = cfg["env"]["manipulateMode"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
 
+        self.hold_still_len = self.cfg["env"]["holdStillLen"]
+
+        self.contact_force_threshold = self.cfg["env"]["contactForceThreshold"]
+        self.hold_still_vel_tolerance = self.cfg["env"]["holdStillVelTolerance"]
+
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.rot_reward_scale = self.cfg["env"]["rotRewardScale"]
         self.action_penalty_scale = self.cfg["env"]["actionPenaltyScale"]
-        self.success_tolerance = self.cfg["env"]["successTolerance"]
+        self.contact_force_reward_scale = self.cfg["env"]["contactForceRewardScale"]
+        self.hold_still_reward_scale = self.cfg["env"]["holdStillRewardScale"]
+
+        self.goal_trans_tolerance = self.cfg["env"]["goalTransTolerance"]
+        self.goal_rot_tolerance = self.cfg["env"]["goalRotTolerance"]
         self.reach_goal_bonus = self.cfg["env"]["reachGoalBonus"]
         self.slide_penalty = self.cfg["env"]["slidePenalty"]
         self.max_dist_slide = self.cfg["env"]["maxDistSlide"]
@@ -64,6 +73,7 @@ class AllegroManip(VecTask):
             self.asset_files_dict["banana"] = self.cfg["env"]["asset"].get("assetFileNameBanana")
             self.asset_files_dict["mug"] = self.cfg["env"]["asset"].get("assetFileNameMug")
             self.asset_files_dict["brick"] = self.cfg["env"]["asset"].get("assetFileNameBrick")
+        
         # can be "full_no_vel", "full", "full_state"
         self.obs_type = self.cfg["env"]["observationType"]
 
@@ -112,16 +122,15 @@ class AllegroManip(VecTask):
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         rigid_body_tensor = self.gym.acquire_rigid_body_state_tensor(self.sim)
 
-        # Contact_tensor
+        # contact_tensor
         contact_tensor = self.gym.acquire_net_contact_force_tensor(self.sim)
-        self.contact_forces = gymtorch.wrap_tensor(contact_tensor).view(self.num_envs, -1,3)
+        self.contact_forces = gymtorch.wrap_tensor(contact_tensor).view(-1, 3)
 
         if self.obs_type == "full_state" or self.asymmetric_obs:
         #     sensor_tensor = self.gym.acquire_force_sensor_tensor(self.sim)
         #     self.vec_sensor_tensor = gymtorch.wrap_tensor(sensor_tensor).view(self.num_envs, self.num_fingertips * 6)
-
-             dof_force_tensor = self.gym.acquire_dof_force_tensor(self.sim)
-             self.dof_force_tensor = gymtorch.wrap_tensor(dof_force_tensor).view(self.num_envs, self.num_shadow_hand_dofs)
+            dof_force_tensor = self.gym.acquire_dof_force_tensor(self.sim)
+            self.dof_force_tensor = gymtorch.wrap_tensor(dof_force_tensor).view(self.num_envs, self.num_shadow_hand_dofs)
 
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_dof_state_tensor(self.sim)
@@ -170,6 +179,9 @@ class AllegroManip(VecTask):
         # allocate buffer
         self.goal_dist_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
         self.rot_dist_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
+        self.hand_contact_force = torch.zeros((self.num_envs, self.num_hand_part), dtype=torch.float, device=self.device)
+        self.contact_force_sum_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
+        self.hold_still_count_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
 
         # set camera
         cam_pos = gymapi.Vec3(0.6, -0.6, 0.7)
@@ -312,6 +324,7 @@ class AllegroManip(VecTask):
         self.fingertip_indices = []
         self.object_indices = []
         self.goal_object_indices = []
+        self.hand_part_indices = []
 
         #self.fingertip_handles = [self.gym.find_asset_rigid_body_index(shadow_hand_asset, name) for name in self.fingertips]
 
@@ -319,11 +332,11 @@ class AllegroManip(VecTask):
         object_rb_count = self.gym.get_asset_rigid_body_count(object_asset)
         self.object_rb_handles = list(range(shadow_hand_rb_count, shadow_hand_rb_count + object_rb_count))
 
-        # Creating force sensor
+        # creating force sensor
         body_names = [self.gym.get_asset_rigid_body_name(shadow_hand_asset, i) for i in range(shadow_hand_rb_count)]
         body_indices = [self.gym.find_asset_rigid_body_index(shadow_hand_asset, name) for name in body_names]
         
-        # Sensor Properties
+        # sensor Properties
         sensor_props = gymapi.ForceSensorProperties()
         sensor_props.enable_forward_dynamics_forces = True
         sensor_props.enable_constraint_solver_forces = True
@@ -331,7 +344,7 @@ class AllegroManip(VecTask):
 
         sensor_pose = gymapi.Transform()
         for body_idx in body_indices:
-            self.gym.create_asset_force_sensor(shadow_hand_asset, body_idx, sensor_pose,sensor_props)
+            self.gym.create_asset_force_sensor(shadow_hand_asset, body_idx, sensor_pose, sensor_props)
 
         for i in range(self.num_envs):
             # create env instance
@@ -362,6 +375,13 @@ class AllegroManip(VecTask):
             #         self.sensors.append(env_sensors)
 
             #     self.gym.enable_actor_dof_force_sensors(env_ptr, shadow_hand_actor)
+            
+            # add finger all parts indices
+            self.num_hand_part = self.gym.get_actor_rigid_body_count(env_ptr, shadow_hand_actor)
+            hand_part_dict = self.gym.get_actor_rigid_body_dict(env_ptr, shadow_hand_actor)
+            for rel_idx in hand_part_dict.values():
+                part_sim_idx = self.gym.get_actor_rigid_body_index(env_ptr, shadow_hand_actor, rel_idx, gymapi.DOMAIN_SIM)
+                self.hand_part_indices.append(part_sim_idx)
 
             # add object
             object_handle = self.gym.create_actor(env_ptr, object_asset, object_start_pose, "object", i, 0, 0)
@@ -405,13 +425,26 @@ class AllegroManip(VecTask):
         self.object_indices = to_torch(self.object_indices, dtype=torch.long, device=self.device)
         self.goal_object_indices = to_torch(self.goal_object_indices, dtype=torch.long, device=self.device)
 
+        self.hand_part_indices = to_torch(self.hand_part_indices, dtype=torch.long, device=self.device)
+
     def compute_reward(self, actions):
         if self.manipulate_mode == "pickup":
             self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.goal_dist_buf = compute_pickup_reward(
                 self.rew_buf, self.reset_buf, self.progress_buf, self.successes,
                 self.max_episode_length, self.object_pos, self.goal_pos,
                 self.dist_reward_scale, self.actions, self.action_penalty_scale,
-                self.success_tolerance, self.reach_goal_bonus, 
+                self.goal_trans_tolerance, self.reach_goal_bonus, 
+                self.max_dist_slide, self.slide_penalty
+            )
+        elif self.manipulate_mode == "hold":
+            self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.hold_still_count_buf[:], self.goal_dist_buf, self.contact_force_sum_buf[:] = compute_hold_reward(
+                self.rew_buf, self.reset_buf, self.progress_buf, self.successes,
+                self.max_episode_length, 
+                self.object_pos, self.object_linvel, self.goal_pos, self.dist_reward_scale, 
+                self.hand_contact_force, self.contact_force_threshold, self.contact_force_reward_scale,
+                self.hold_still_count_buf, self.hold_still_len, self.hold_still_reward_scale, self.hold_still_vel_tolerance,
+                self.actions, self.action_penalty_scale,
+                self.goal_trans_tolerance, self.reach_goal_bonus, 
                 self.max_dist_slide, self.slide_penalty
             )
         elif self.manipulate_mode == "reorient":
@@ -419,7 +452,7 @@ class AllegroManip(VecTask):
                 self.rew_buf, self.reset_buf, self.reset_goal_buf, self.progress_buf, self.successes, self.consecutive_successes,
                 self.max_episode_length, self.object_pos, self.object_rot, self.goal_pos, self.goal_rot,
                 self.dist_reward_scale, self.rot_reward_scale, self.rot_eps, self.actions, self.action_penalty_scale,
-                self.success_tolerance, self.reach_goal_bonus, self.max_dist_slide, self.slide_penalty,
+                self.goal_rot_tolerance, self.reach_goal_bonus, self.max_dist_slide, self.slide_penalty,
                 self.max_consecutive_successes, self.av_factor, (self.object_type == "pen")
             )
 
@@ -458,6 +491,7 @@ class AllegroManip(VecTask):
 
         # self.fingertip_state = self.rigid_body_states[:, self.fingertip_handles][:, :, 0:13]
         # self.fingertip_pos = self.rigid_body_states[:, self.fingertip_handles][:, :, 0:3]
+        self.hand_contact_force = self.contact_forces[self.hand_part_indices].reshape(self.num_envs, -1, 3) 
 
         if self.obs_type == "full_no_vel":
             self.compute_full_observations(True)
@@ -733,6 +767,8 @@ class AllegroManip(VecTask):
         for idx in range(min(self.num_envs, 4)):
             if self.manipulate_mode == "pickup":
                 print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
+            elif self.manipulate_mode == "hold":
+                print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}, contact_sum: {self.contact_force_sum_buf[idx]}, hold still: {self.hold_still_count_buf[idx]}.")
             elif self.manipulate_mode == "reorient":
                 print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, rot_dist: {self.rot_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
 

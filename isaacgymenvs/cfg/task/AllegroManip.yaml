@@ -31,7 +31,7 @@ env:
   resetDofVelRandomInterval: 0.0
 
   # manipulate mode
-  manipulateMode: "reorient"  # pickup, reorient, hold
+  manipulateMode: "hold"  # pickup, reorient, hold
 
   # Random forces applied to the object
   forceScale: 0.0
@@ -48,10 +48,20 @@ env:
   maxDistSlide: 0.1
   slidePenalty: 0.0
 
+  # contact
+  contactForceThreshold: 1.0
+  contactForceRewardScale: 0.2
+
+  # hold 
+  holdStillLen: 10.0
+  holdStillVelTolerance: 0.01
+  holdStillRewardScale: 0.1
+
   objectType: "mug" # can be block, egg, pen, can, banana, mug, brick
   observationType: "full_state" # can be "no_vel", "full_state"
   asymmetric_observations: False
-  successTolerance: 0.1
+  goalTransTolerance: 0.01
+  goalRotTolerance: 0.1
   printNumSuccesses: False
   maxConsecutiveSuccesses: 0
 
