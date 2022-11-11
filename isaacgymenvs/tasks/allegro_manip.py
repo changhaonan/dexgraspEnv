@@ -112,6 +112,10 @@ class AllegroManip(VecTask):
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         rigid_body_tensor = self.gym.acquire_rigid_body_state_tensor(self.sim)
 
+        # Contact_tensor
+        contact_tensor = self.gym.acquire_net_contact_force_tensor(self.sim)
+        self.contact_forces = gymtorch.wrap_tensor(contact_tensor).view(self.num_envs, -1,3)
+
         if self.obs_type == "full_state" or self.asymmetric_obs:
         #     sensor_tensor = self.gym.acquire_force_sensor_tensor(self.sim)
         #     self.vec_sensor_tensor = gymtorch.wrap_tensor(sensor_tensor).view(self.num_envs, self.num_fingertips * 6)
@@ -315,6 +319,20 @@ class AllegroManip(VecTask):
         object_rb_count = self.gym.get_asset_rigid_body_count(object_asset)
         self.object_rb_handles = list(range(shadow_hand_rb_count, shadow_hand_rb_count + object_rb_count))
 
+        # Creating force sensor
+        body_names = [self.gym.get_asset_rigid_body_name(shadow_hand_asset, i) for i in range(shadow_hand_rb_count)]
+        body_indices = [self.gym.find_asset_rigid_body_index(shadow_hand_asset, name) for name in body_names]
+        
+        # Sensor Properties
+        sensor_props = gymapi.ForceSensorProperties()
+        sensor_props.enable_forward_dynamics_forces = True
+        sensor_props.enable_constraint_solver_forces = True
+        sensor_props.use_world_frame = True
+
+        sensor_pose = gymapi.Transform()
+        for body_idx in body_indices:
+            self.gym.create_asset_force_sensor(shadow_hand_asset, body_idx, sensor_pose,sensor_props)
+
         for i in range(self.num_envs):
             # create env instance
             env_ptr = self.gym.create_env(
@@ -422,6 +440,7 @@ class AllegroManip(VecTask):
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
+        self.gym.refresh_net_contact_force_tensor(self.sim)
 
         if self.obs_type == "full_state" or self.asymmetric_obs:
             self.gym.refresh_force_sensor_tensor(self.sim)
