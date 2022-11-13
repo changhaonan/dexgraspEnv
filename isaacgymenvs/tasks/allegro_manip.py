@@ -22,6 +22,7 @@ class AllegroManip(VecTask):
 
         self.contact_force_threshold = self.cfg["env"]["contactForceThreshold"]
         self.hold_still_vel_tolerance = self.cfg["env"]["holdStillVelTolerance"]
+        self.angvel_scale = self.cfg["env"]["angVelScale"]
 
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.rot_reward_scale = self.cfg["env"]["rotRewardScale"]
@@ -440,7 +441,8 @@ class AllegroManip(VecTask):
             self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.hold_still_count_buf[:], self.goal_dist_buf, self.contact_force_sum_buf[:] = compute_hold_reward(
                 self.rew_buf, self.reset_buf, self.progress_buf, self.successes,
                 self.max_episode_length, 
-                self.object_pos, self.object_linvel, self.goal_pos, self.dist_reward_scale, 
+                self.object_pos, self.object_linvel, self.object_angvel, self.angvel_scale,
+                self.goal_pos, self.dist_reward_scale, 
                 self.hand_contact_force, self.contact_force_threshold, self.contact_force_reward_scale,
                 self.hold_still_count_buf, self.hold_still_len, self.hold_still_reward_scale, self.hold_still_vel_tolerance,
                 self.actions, self.action_penalty_scale,

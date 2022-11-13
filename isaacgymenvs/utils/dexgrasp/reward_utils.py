@@ -143,7 +143,8 @@ def compute_pickup_reward(
 def compute_hold_reward(
     rew_buf, reset_buf, progress_buf, successes,
     max_episode_length: float, 
-    object_pos, object_linvel, target_pos, dist_reward_scale: float,
+    object_pos, object_linvel, object_angvel, angvel_scale: float,
+    target_pos, dist_reward_scale: float,
     hand_contact_force, contact_force_threshold: float, contact_reward_scale: float,
     hold_still_count_buf, hold_still_len, hold_still_reward_scale: float, hold_still_vel_threshold: float,
     actions, action_penalty_scale: float,
@@ -171,7 +172,8 @@ def compute_hold_reward(
     contact_rew = 1.0 / torch.clamp(contact_existence_sum, min=1.0)
 
     # Hold still reward (Compute when the object is close enough to the target)
-    hold_still_rew = 1.0 / torch.clamp(torch.norm(object_linvel, p=2, dim=-1), min=hold_still_vel_threshold) 
+    object_vel_norm = torch.norm(object_linvel, p=2, dim=-1) + torch.norm(object_angvel, p=2, dim=-1) * angvel_scale
+    hold_still_rew = 1.0 / torch.clamp(object_vel_norm, min=hold_still_vel_threshold) 
     hold_still_rew = torch.where(reach_goal == 1, hold_still_rew, torch.zeros_like(hold_still_rew))
     hold_still_success = torch.where(hold_still_count_buf >= hold_still_len, torch.ones_like(reset_buf), reset_buf)
     hold_still_count_buf = torch.where(hold_still_success == 1, torch.zeros_like(hold_still_count_buf), hold_still_count_buf)

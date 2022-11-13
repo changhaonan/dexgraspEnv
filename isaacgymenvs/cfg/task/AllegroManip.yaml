@@ -40,22 +40,23 @@ env:
   forceDecayInterval: 0.08
 
   # reward -> dictionary
-  distRewardScale: 10.0
+  distRewardScale: 20.0
   rotRewardScale: 1.0  # Ignore the rotation
   rotEps: 0.1
   actionPenaltyScale: -0.002
   reachGoalBonus: 1000
   maxDistSlide: 0.1
-  slidePenalty: -100.0
+  slidePenalty: -50.0
 
   # contact
   contactForceThreshold: 0.01
   contactForceRewardScale: -1.0
 
   # hold 
-  holdStillLen: 10.0
+  holdStillLen: 20.0
   holdStillVelTolerance: 0.01
   holdStillRewardScale: 0.1
+  angVelScale: 0.05
 
   objectType: "mug" # can be block, egg, pen, can, banana, mug, brick
   observationType: "full_state" # can be "no_vel", "full_state"
