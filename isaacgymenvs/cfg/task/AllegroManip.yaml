@@ -40,17 +40,17 @@ env:
   forceDecayInterval: 0.08
 
   # reward -> dictionary
-  distRewardScale: -10.0
+  distRewardScale: 10.0
   rotRewardScale: 1.0  # Ignore the rotation
   rotEps: 0.1
   actionPenaltyScale: -0.002
   reachGoalBonus: 1000
   maxDistSlide: 0.1
-  slidePenalty: 0.0
+  slidePenalty: -100.0
 
   # contact
-  contactForceThreshold: 1.0
-  contactForceRewardScale: 0.2
+  contactForceThreshold: 0.01
+  contactForceRewardScale: -1.0
 
   # hold 
   holdStillLen: 10.0

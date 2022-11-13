@@ -139,12 +139,12 @@ def compute_pickup_reward(
     return reward, resets, progress_buf, successes, goal_dist
 
 
-# @torch.jit.script
+@torch.jit.script
 def compute_hold_reward(
     rew_buf, reset_buf, progress_buf, successes,
     max_episode_length: float, 
     object_pos, object_linvel, target_pos, dist_reward_scale: float,
-    hand_contact_force, contact_force_threshold: float, contact_force_reward_scale: float,
+    hand_contact_force, contact_force_threshold: float, contact_reward_scale: float,
     hold_still_count_buf, hold_still_len, hold_still_reward_scale: float, hold_still_vel_threshold: float,
     actions, action_penalty_scale: float,
     success_tolerance: float, success_bonus: float,
@@ -165,7 +165,10 @@ def compute_hold_reward(
     hold_still_count_buf = torch.where(reach_goal == 1, hold_still_count_buf + 1, hold_still_count_buf)
 
     # Contact force reward
-    contact_force_sum = torch.sum(torch.clamp(torch.abs(hand_contact_force.view(num_envs, -1)), max=contact_force_threshold), dim=-1)
+    contact_force_rigid_body = torch.norm(hand_contact_force, p=2, dim=-1)
+    contact_existence = torch.where(contact_force_rigid_body > contact_force_threshold, torch.ones_like(contact_force_rigid_body), torch.zeros_like(contact_force_rigid_body))
+    contact_existence_sum = torch.sum(contact_existence, dim=-1)
+    contact_rew = 1.0 / torch.clamp(contact_existence_sum, min=1.0)
 
     # Hold still reward (Compute when the object is close enough to the target)
     hold_still_rew = 1.0 / torch.clamp(torch.norm(object_linvel, p=2, dim=-1), min=hold_still_vel_threshold) 
@@ -178,7 +181,7 @@ def compute_hold_reward(
     resets = torch.where(hold_still_success == 1, torch.ones_like(reset_buf), reset_buf)
 
     # Total reward is: position distance + orientation alignment + action regularization + success bonus + fall penalty
-    reward = dist_rew + action_penalty * action_penalty_scale + contact_force_sum * contact_force_reward_scale + hold_still_rew * hold_still_reward_scale
+    reward = dist_rew + action_penalty * action_penalty_scale + contact_rew * contact_reward_scale + hold_still_rew * hold_still_reward_scale
 
     # Success bonus: reach the goal
     reward = torch.where(hold_still_success == 1, reward + success_bonus, reward)
@@ -191,7 +194,7 @@ def compute_hold_reward(
     timed_out = progress_buf >= max_episode_length - 1
     resets = torch.where(timed_out, torch.ones_like(resets), resets)
 
-    return reward, resets, progress_buf, successes, hold_still_count_buf, goal_dist, contact_force_sum
+    return reward, resets, progress_buf, successes, hold_still_count_buf, goal_dist, contact_existence_sum
 
 
 # @torch.jit.script

@@ -23,6 +23,12 @@ Train from scratch
 HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=AllegroManip wandb_activate=True wandb_project=AllegroManip force_render=False num_envs=8192 max_iterations=5000
 ```
 
+Train from scratch with video
+
+```
+HYDRA_FULL_ERROR=1 CUDA_LAUNCH_BLOCKING=1 python train.py task=AllegroManip capture_video=True capture_video_freq=1500 capture_video_len=100 wandb_activate=True wandb_project=AllegroManip force_render=False num_envs=8192 max_iterations=5000
+```
+
 Train from checkpoint
 
 ```
