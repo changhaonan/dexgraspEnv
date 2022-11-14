@@ -6,7 +6,7 @@ from isaacgym import gymtorch
 from isaacgym import gymapi
 from isaacgym.torch_utils import *
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_3D_pose, draw_bbox
+from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_3D_pose, draw_bbox, draw_vector
 from isaacgymenvs.utils.dexgrasp.reward_utils import compute_pickup_reward, compute_reorient_reward, compute_hold_reward
 
 
@@ -752,27 +752,35 @@ class AllegroManip(VecTask):
             targetz = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
 
             # p0 = self.goal_pos[i].cpu().numpy() + self.goal_displacement_tensor.cpu().numpy()
-            p0 = self.goal_pos[i].cpu().numpy() 
-            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetx[0], targetx[1], targetx[2]], [0.85, 0.1, 0.1])
-            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targety[0], targety[1], targety[2]], [0.1, 0.85, 0.1])
-            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetz[0], targetz[1], targetz[2]], [0.1, 0.1, 0.85])
+            # p0 = self.goal_pos[i].cpu().numpy() 
+            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetx[0], targetx[1], targetx[2]], [0.85, 0.1, 0.1])
+            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targety[0], targety[1], targety[2]], [0.1, 0.85, 0.1])
+            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetz[0], targetz[1], targetz[2]], [0.1, 0.1, 0.85])
 
-            objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
-            objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
-            objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
+            # objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
+            # objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
+            # objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
 
-            p0 = self.object_pos[i].cpu().numpy()
-            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
-            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
-            self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
+            # p0 = self.object_pos[i].cpu().numpy()
+            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
+            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
+            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
 
-            # draw init state
-            draw_6D_pose(self.gym, self.viewer, self.envs[i], self.object_init_state[i, 0:3].cpu().numpy(), self.object_init_state[i, 3:7].cpu().numpy(), 
-                sphere_radius=0.01, color=(0, 1, 0))
+            # # draw init state
+            # draw_6D_pose(self.gym, self.viewer, self.envs[i], self.object_init_state[i, 0:3].cpu().numpy(), self.object_init_state[i, 3:7].cpu().numpy(), 
+            #     sphere_radius=0.01, color=(0, 1, 0))
 
-            # draw target
-            draw_6D_pose(self.gym, self.viewer, self.envs[i], self.goal_pos[i].cpu().numpy(), self.goal_rot[i].cpu().numpy(), sphere_radius=0.01, 
-                color=(0, 0, 1))
+            # # draw target
+            # draw_6D_pose(self.gym, self.viewer, self.envs[i], self.goal_pos[i].cpu().numpy(), self.goal_rot[i].cpu().numpy(), sphere_radius=0.01, 
+            #     color=(0, 0, 1))
+
+            # draw contacts
+            # self.gym.draw_env_rigid_contacts(self.viewer, self.envs[i], gymapi.Vec3(0, 255, 0), 0.1, False)
+
+            # draw out the target force, centered at the object
+            object_center = self.object_pos[i].cpu().numpy()
+            force = self.goal_force[i].cpu().numpy() * 0.1  # scale down
+            draw_vector(self.gym, self.viewer, self.envs[i], object_center, force, color=(1, 1, 0))
 
     def log_metric(self):
         for idx in range(min(self.num_envs, 4)):
