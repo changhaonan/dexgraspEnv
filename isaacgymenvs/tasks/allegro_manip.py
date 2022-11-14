@@ -50,6 +50,8 @@ class AllegroManip(VecTask):
         self.force_decay = self.cfg["env"].get("forceDecay", 0.99)
         self.force_decay_interval = self.cfg["env"].get("forceDecayInterval", 0.08)
 
+        self.force_range = self.cfg["env"]["forceRange"]
+
         self.shadow_hand_dof_speed_scale = self.cfg["env"]["dofSpeedScale"]
         self.use_relative_control = self.cfg["env"]["useRelativeControl"]
         self.act_moving_average = self.cfg["env"]["actionsMovingAverage"]
@@ -168,14 +170,6 @@ class AllegroManip(VecTask):
 
         self.total_successes = 0
         self.total_resets = 0
-
-        # object apply random forces parameters
-        self.force_decay = to_torch(self.force_decay, dtype=torch.float, device=self.device)
-        self.force_prob_range = to_torch(self.force_prob_range, dtype=torch.float, device=self.device)
-        self.random_force_prob = torch.exp((torch.log(self.force_prob_range[0]) - torch.log(self.force_prob_range[1]))
-                                           * torch.rand(self.num_envs, device=self.device) + torch.log(self.force_prob_range[1]))
-
-        self.rb_forces = torch.zeros((self.num_envs, self.num_bodies, 3), dtype=torch.float, device=self.device)
 
         # allocate buffer
         self.goal_dist_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
@@ -327,6 +321,8 @@ class AllegroManip(VecTask):
         self.goal_object_indices = []
         self.hand_part_indices = []
 
+        self.object_handles = []
+
         #self.fingertip_handles = [self.gym.find_asset_rigid_body_index(shadow_hand_asset, name) for name in self.fingertips]
 
         shadow_hand_rb_count = self.gym.get_asset_rigid_body_count(shadow_hand_asset)
@@ -386,6 +382,7 @@ class AllegroManip(VecTask):
 
             # add object
             object_handle = self.gym.create_actor(env_ptr, object_asset, object_start_pose, "object", i, 0, 0)
+            self.object_handles.append(object_handle)
             self.object_init_state.append([object_start_pose.p.x, object_start_pose.p.y, object_start_pose.p.z,
                                            object_start_pose.r.x, object_start_pose.r.y, object_start_pose.r.z, object_start_pose.r.w,
                                            0, 0, 0, 0, 0, 0])
@@ -412,11 +409,13 @@ class AllegroManip(VecTask):
         object_rb_props = self.gym.get_actor_rigid_body_properties(env_ptr, object_handle)
         self.object_rb_masses = [prop.mass for prop in object_rb_props]
 
+        # goal initialization
         self.object_init_state = to_torch(self.object_init_state, device=self.device, dtype=torch.float).view(self.num_envs, 13)
         self.goal_states = self.object_init_state.clone()
         self.goal_states[:, self.up_axis_idx] += 0.04  # goal pos is higher than init
         self.goal_init_state = self.goal_states.clone()
         self.hand_start_states = to_torch(self.hand_start_states, device=self.device).view(self.num_envs, 13)
+        self.goal_force = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
 
         # self.fingertip_handles = to_torch(self.fingertip_handles, dtype=torch.long, device=self.device)
         self.object_rb_handles = to_torch(self.object_rb_handles, dtype=torch.long, device=self.device)
@@ -598,7 +597,8 @@ class AllegroManip(VecTask):
             obs_end = fingertip_obs_start #+ num_ft_states + num_ft_force_torques
             self.obs_buf[:, obs_end:obs_end + self.num_actions] = self.actions
 
-    def reset_target_pose(self, env_ids, apply_reset=False):
+    def reset_target(self, env_ids, apply_reset=False):
+        # reset the target pose
         rand_floats = torch_rand_float(-1.0, 1.0, (len(env_ids), 4), device=self.device)
 
         new_rot = randomize_rotation(rand_floats[:, 0], rand_floats[:, 1], self.x_unit_tensor[env_ids], self.y_unit_tensor[env_ids])
@@ -614,6 +614,11 @@ class AllegroManip(VecTask):
             self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                          gymtorch.unwrap_tensor(self.root_state_tensor),
                                                          gymtorch.unwrap_tensor(goal_object_indices), len(env_ids))
+        
+        # reset the target force
+        self.goal_force[env_ids] = torch_rand_float(self.force_range[0], self.force_range[1], (len(env_ids), 3), device=self.device)
+
+        # reset the goal buf
         self.reset_goal_buf[env_ids] = 0
 
     def reset_idx(self, env_ids, goal_env_ids):
@@ -621,10 +626,7 @@ class AllegroManip(VecTask):
         rand_floats = torch_rand_float(-1.0, 1.0, (len(env_ids), self.num_shadow_hand_dofs * 2 + 5), device=self.device)
 
         # randomize start object poses
-        self.reset_target_pose(env_ids)
-
-        # reset rigid body forces
-        self.rb_forces[env_ids, :, :] = 0.0
+        self.reset_target(env_ids)
 
         # reset object
         self.root_state_tensor[self.object_indices[env_ids]] = self.object_init_state[env_ids].clone()
@@ -648,10 +650,6 @@ class AllegroManip(VecTask):
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self.root_state_tensor),
                                                      gymtorch.unwrap_tensor(object_indices), len(object_indices))
-
-        # reset random force probabilities
-        self.random_force_prob[env_ids] = torch.exp((torch.log(self.force_prob_range[0]) - torch.log(self.force_prob_range[1]))
-                                                    * torch.rand(len(env_ids), device=self.device) + torch.log(self.force_prob_range[1]))
 
         # reset shadow hand
         delta_max = self.shadow_hand_dof_upper_limits - self.shadow_hand_dof_default_pos
@@ -684,11 +682,11 @@ class AllegroManip(VecTask):
 
         # if only goals need reset, then call set API
         if len(goal_env_ids) > 0 and len(env_ids) == 0:
-            self.reset_target_pose(goal_env_ids, apply_reset=True)
+            self.reset_target(goal_env_ids, apply_reset=True)
 
         # if goals need reset in addition to other envs, call set API in reset()
         elif len(goal_env_ids) > 0:
-            self.reset_target_pose(goal_env_ids)
+            self.reset_target(goal_env_ids)
 
         if len(env_ids) > 0:
             self.reset_idx(env_ids, goal_env_ids)
@@ -711,15 +709,11 @@ class AllegroManip(VecTask):
         self.prev_targets[:, self.actuated_dof_indices] = self.cur_targets[:, self.actuated_dof_indices]
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.cur_targets))
 
-        if self.force_scale > 0.0:
-            self.rb_forces *= torch.pow(self.force_decay, self.dt / self.force_decay_interval)
-
-            # apply new forces
-            force_indices = (torch.rand(self.num_envs, device=self.device) < self.random_force_prob).nonzero()
-            self.rb_forces[force_indices, self.object_rb_handles, :] = torch.randn(
-                self.rb_forces[force_indices, self.object_rb_handles, :].shape, device=self.device) * self.object_rb_masses * self.force_scale
-
-            self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.rb_forces), None, gymapi.LOCAL_SPACE)
+        # apply random force to manipulated object
+        for idx in range(self.num_envs):
+            object_force = gymapi.Vec3(0.0, 0.0, 20.0)
+            object_rb_handle = self.gym.get_actor_rigid_body_handle(self.envs[idx], self.object_handles[idx], 0)
+            self.gym.apply_body_forces(self.envs[idx], 18, force=object_force)
 
     def post_physics_step(self):
         self.progress_buf += 1

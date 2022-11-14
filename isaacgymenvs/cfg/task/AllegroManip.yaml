@@ -39,6 +39,9 @@ env:
   forceDecay: 0.99
   forceDecayInterval: 0.08
 
+  # random force applied to the manipulated object
+  forceRange: [0.001, 0.1]
+
   # reward -> dictionary
   distRewardScale: 20.0
   rotRewardScale: 1.0  # Ignore the rotation
