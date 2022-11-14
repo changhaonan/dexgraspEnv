@@ -196,7 +196,7 @@ def compute_hold_reward(
     timed_out = progress_buf >= max_episode_length - 1
     resets = torch.where(timed_out, torch.ones_like(resets), resets)
 
-    return reward, resets, progress_buf, successes, hold_still_count_buf, goal_dist, contact_existence_sum
+    return reward, resets, progress_buf, successes, hold_still_count_buf, goal_dist, contact_existence_sum, reach_goal
 
 
 # @torch.jit.script

@@ -89,7 +89,7 @@ class AllegroManip(VecTask):
         self.num_obs_dict = {
             "full_no_vel": 50,
             "full": 72,
-            "full_state": 88
+            "full_state": 91
         }
 
         self.up_axis = 'z'
@@ -177,6 +177,7 @@ class AllegroManip(VecTask):
         self.hand_contact_force = torch.zeros((self.num_envs, self.num_hand_part), dtype=torch.float, device=self.device)
         self.contact_force_sum_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
         self.hold_still_count_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
+        self.reach_goal_buf = torch.zeros((self.num_envs), dtype=torch.float, device=self.device)
 
         # set camera
         cam_pos = gymapi.Vec3(0.6, -0.6, 0.7)
@@ -437,7 +438,7 @@ class AllegroManip(VecTask):
                 self.max_dist_slide, self.slide_penalty
             )
         elif self.manipulate_mode == "hold":
-            self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.hold_still_count_buf[:], self.goal_dist_buf, self.contact_force_sum_buf[:] = compute_hold_reward(
+            self.rew_buf[:], self.reset_buf[:], self.progress_buf[:], self.successes[:], self.hold_still_count_buf[:], self.goal_dist_buf, self.contact_force_sum_buf[:], self.reach_goal_buf[:] = compute_hold_reward(
                 self.rew_buf, self.reset_buf, self.progress_buf, self.successes,
                 self.max_episode_length, 
                 self.object_pos, self.object_linvel, self.object_angvel, self.angvel_scale,
@@ -562,11 +563,14 @@ class AllegroManip(VecTask):
             # self.states_buf[:, fingertip_obs_start:fingertip_obs_start + num_ft_states] = self.fingertip_state.reshape(self.num_envs, num_ft_states)
             # self.states_buf[:, fingertip_obs_start + num_ft_states:fingertip_obs_start + num_ft_states +
             #                 num_ft_force_torques] = self.force_torque_obs_scale * self.vec_sensor_tensor
-
             # obs_end = 96 + 65 + 30 = 191
-            # obs_total = obs_end + num_actions = 72 + 16 = 88
             obs_end = fingertip_obs_start #+ num_ft_states + num_ft_force_torques
-            self.states_buf[:, obs_end:obs_end + self.num_actions] = self.actions
+            self.obs_buf[:, obs_end:obs_end + self.num_actions] = self.actions
+
+            # goal force
+            goal_force_start = obs_end + self.num_actions
+            # obs_total = goal_force_start + 3 = 88 + 3 = 91
+            self.obs_buf[:, goal_force_start:goal_force_start + 3] = self.goal_force
         else:
             self.obs_buf[:, 0:self.num_shadow_hand_dofs] = unscale(self.shadow_hand_dof_pos,
                                                                       self.shadow_hand_dof_lower_limits, self.shadow_hand_dof_upper_limits)
@@ -593,9 +597,13 @@ class AllegroManip(VecTask):
             #                 num_ft_force_torques] = self.force_torque_obs_scale * self.vec_sensor_tensor
 
             # obs_end = 96 + 65 + 30 = 191
-            # obs_total = obs_end + num_actions = 72 + 16 = 88
             obs_end = fingertip_obs_start #+ num_ft_states + num_ft_force_torques
             self.obs_buf[:, obs_end:obs_end + self.num_actions] = self.actions
+
+            # goal force
+            goal_force_start = obs_end + self.num_actions
+            # obs_total = goal_force_start + 3 = 88 + 3 = 91
+            self.obs_buf[:, goal_force_start:goal_force_start + 3] = self.goal_force
 
     def reset_target(self, env_ids, apply_reset=False):
         # reset the target pose
@@ -711,7 +719,8 @@ class AllegroManip(VecTask):
 
         # apply random force to manipulated object
         for idx in range(self.num_envs):
-            object_force = gymapi.Vec3(0.0, 0.0, 20.0)
+            goal_force = self.goal_force[idx] * self.reach_goal_buf[idx]
+            object_force = gymapi.Vec3(goal_force[0], goal_force[1], goal_force[2])
             object_rb_handle = self.gym.get_actor_rigid_body_handle(self.envs[idx], self.object_handles[idx], 0)
             self.gym.apply_body_forces(self.envs[idx], 18, force=object_force)
 
@@ -764,9 +773,10 @@ class AllegroManip(VecTask):
             if self.manipulate_mode == "pickup":
                 print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
             elif self.manipulate_mode == "hold":
-                print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}, contact_sum: {self.contact_force_sum_buf[idx]}, hold still: {self.hold_still_count_buf[idx]}.")
+                print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, reset: {self.reset_buf[idx]}, contact_sum: {self.contact_force_sum_buf[idx]}, hold still: {self.hold_still_count_buf[idx]}, reach: {self.reach_goal_buf[idx]}.")
             elif self.manipulate_mode == "reorient":
                 print(f"Env {idx}, prog: {self.progress_buf[idx]}, reward: {self.rew_buf[idx]}, goal_dist: {self.goal_dist_buf[idx]}, rot_dist: {self.rot_dist_buf[idx]}, reset: {self.reset_buf[idx]}.")
+
 
 #####################################################################
 ###=========================jit functions=========================###

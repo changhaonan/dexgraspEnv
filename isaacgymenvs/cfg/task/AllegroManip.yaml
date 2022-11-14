@@ -40,7 +40,7 @@ env:
   forceDecayInterval: 0.08
 
   # random force applied to the manipulated object
-  forceRange: [0.001, 0.1]
+  forceRange: [0.001, 1.0]
 
   # reward -> dictionary
   distRewardScale: 20.0
