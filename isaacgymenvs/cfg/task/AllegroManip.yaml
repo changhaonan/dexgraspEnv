@@ -80,7 +80,7 @@ env:
     assetFileNameBrick: "urdf/ycb/061_foam_brick/061_foam_brick.urdf"
 
 task:
-  randomize: False
+  randomize: True
   randomization_params:
     frequency: 720   # Define how many simulation steps between generating new randomizations
     observations:

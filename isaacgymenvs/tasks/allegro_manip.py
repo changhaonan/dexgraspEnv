@@ -80,6 +80,10 @@ class AllegroManip(VecTask):
         # can be "full_no_vel", "full", "full_state"
         self.obs_type = self.cfg["env"]["observationType"]
 
+        # domain ramdomization
+        self.randomize = self.cfg["task"]["randomize"]
+        self.randomization_params = self.cfg["task"]["randomization_params"]
+
         if not (self.obs_type in ["full_no_vel", "full", "full_state"]):
             raise Exception(
                 "Unknown type of observations!\nobservationType should be one of: [openai, full_no_vel, full, full_state]")
@@ -193,6 +197,10 @@ class AllegroManip(VecTask):
         self.sim = super().create_sim(self.device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
         self._create_ground_plane()
         self._create_envs(self.num_envs, self.cfg["env"]['envSpacing'], int(np.sqrt(self.num_envs)))
+
+        # If randomizing, apply once immediately on startup before the fist sim step
+        if self.randomize:
+            self.apply_randomizations(self.randomization_params)
 
     def _create_ground_plane(self):
         plane_params = gymapi.PlaneParams()
