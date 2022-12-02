@@ -61,7 +61,7 @@ env:
   holdStillRewardScale: 0.1
   angVelScale: 0.05
 
-  objectType: "mug" # can be block, egg, pen, can, banana, mug, brick
+  objectType: "bottle" # can be block, egg, pen, can, banana, mug, brick, bottle
   observationType: "full_state" # can be "no_vel", "full_state"
   asymmetric_observations: False
   goalTransTolerance: 0.01
@@ -78,6 +78,7 @@ env:
     assetFileNameBanana: "urdf/ycb/011_banana/011_banana.urdf"
     assetFileNameMug: "urdf/ycb/025_mug/025_mug.urdf"
     assetFileNameBrick: "urdf/ycb/061_foam_brick/061_foam_brick.urdf"
+    assetFileNameBottle: "urdf/ycb/bottle/model.urdf"
 
 task:
   randomize: True

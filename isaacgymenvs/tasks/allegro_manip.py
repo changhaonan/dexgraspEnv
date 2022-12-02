@@ -65,7 +65,7 @@ class AllegroManip(VecTask):
         self.av_factor = self.cfg["env"].get("averFactor", 0.1)
 
         self.object_type = self.cfg["env"]["objectType"]
-        assert self.object_type in ["block", "egg", "pen", "can", "banana", "mug", "brick"]
+        assert self.object_type in ["block", "egg", "pen", "can", "banana", "mug", "brick", "bottle"]
         self.ignore_z = (self.object_type == "pen")
         self.asset_files_dict = {}
         if "asset" in self.cfg["env"]:
@@ -76,6 +76,7 @@ class AllegroManip(VecTask):
             self.asset_files_dict["banana"] = self.cfg["env"]["asset"].get("assetFileNameBanana")
             self.asset_files_dict["mug"] = self.cfg["env"]["asset"].get("assetFileNameMug")
             self.asset_files_dict["brick"] = self.cfg["env"]["asset"].get("assetFileNameBrick")
+            self.asset_files_dict["bottle"] = self.cfg["env"]["asset"].get("assetFileNameBottle")
         
         # can be "full_no_vel", "full", "full_state"
         self.obs_type = self.cfg["env"]["observationType"]
