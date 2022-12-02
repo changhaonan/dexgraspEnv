@@ -61,6 +61,10 @@ env:
   holdStillRewardScale: 0.1
   angVelScale: 0.05
 
+  # base control
+  transitionScale: 0.5
+  orientationScale: 0.1
+
   objectType: "mug" # can be block, egg, pen, can, banana, mug, brick
   observationType: "full_state" # can be "no_vel", "full_state"
   asymmetric_observations: False
@@ -80,7 +84,7 @@ env:
     assetFileNameBrick: "urdf/ycb/061_foam_brick/061_foam_brick.urdf"
 
 task:
-  randomize: True
+  randomize: False
   randomization_params:
     frequency: 720   # Define how many simulation steps between generating new randomizations
     observations:

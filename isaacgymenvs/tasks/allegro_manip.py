@@ -63,6 +63,8 @@ class AllegroManip(VecTask):
         self.print_success_stat = self.cfg["env"]["printNumSuccesses"]
         self.max_consecutive_successes = self.cfg["env"]["maxConsecutiveSuccesses"]
         self.av_factor = self.cfg["env"].get("averFactor", 0.1)
+        self.transition_scale = self.cfg["env"]["transitionScale"]
+        self.orientation_scale = self.cfg["env"]["orientationScale"]
 
         self.object_type = self.cfg["env"]["objectType"]
         assert self.object_type in ["block", "egg", "pen", "can", "banana", "mug", "brick"]
@@ -91,9 +93,9 @@ class AllegroManip(VecTask):
         print("Obs type:", self.obs_type)
 
         self.num_obs_dict = {
-            "full_no_vel": 50,
-            "full": 72,
-            "full_state": 91
+            "full_no_vel": 56,
+            "full": 78,
+            "full_state": 97
         }
 
         self.up_axis = 'z'
@@ -108,7 +110,7 @@ class AllegroManip(VecTask):
 
         self.cfg["env"]["numObservations"] = self.num_obs_dict[self.obs_type]
         self.cfg["env"]["numStates"] = num_states
-        self.cfg["env"]["numActions"] = 16
+        self.cfg["env"]["numActions"] = 16 + 6
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
@@ -160,6 +162,10 @@ class AllegroManip(VecTask):
 
         self.prev_targets = torch.zeros((self.num_envs, self.num_dofs), dtype=torch.float, device=self.device)
         self.cur_targets = torch.zeros((self.num_envs, self.num_dofs), dtype=torch.float, device=self.device)
+
+        # base control tensors
+        self.apply_forces = torch.zeros((self.num_envs, self.num_bodies, 3), device=self.device, dtype=torch.float)
+        self.apply_torque = torch.zeros((self.num_envs, self.num_bodies, 3), device=self.device, dtype=torch.float)
 
         self.global_indices = torch.arange(self.num_envs * 3, dtype=torch.int32, device=self.device).view(self.num_envs, -1)
         self.x_unit_tensor = to_torch([1, 0, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
@@ -237,11 +243,12 @@ class AllegroManip(VecTask):
         # load shadow hand_ asset
         hand_asset_options = gymapi.AssetOptions()
         hand_asset_options.flip_visual_attachments = False
-        hand_asset_options.fix_base_link = True
+        hand_asset_options.fix_base_link = False
         hand_asset_options.collapse_fixed_joints = True
         hand_asset_options.disable_gravity = True
         hand_asset_options.thickness = 0.001
-        hand_asset_options.angular_damping = 0.01
+        hand_asset_options.angular_damping = 100
+        hand_asset_options.linear_damping = 100
 
         if self.physics_engine == gymapi.SIM_PHYSX:
             hand_asset_options.use_physx_armature = True
@@ -699,6 +706,11 @@ class AllegroManip(VecTask):
         self.successes[env_ids] = 0
 
     def pre_physics_step(self, actions):
+        """ control the hand base and hand joint: (dim: 22 = 6 + 16)
+            - actions[0:3] controls the translation of hand base
+            - actions[3:6] controls the rotation of hand base
+            - actions[6:] controls the joint angles of the hand
+        """
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         goal_env_ids = self.reset_goal_buf.nonzero(as_tuple=False).squeeze(-1)
 
@@ -721,12 +733,19 @@ class AllegroManip(VecTask):
             self.cur_targets[:, self.actuated_dof_indices] = tensor_clamp(targets,
                                                                           self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
         else:
-            self.cur_targets[:, self.actuated_dof_indices] = scale(self.actions,
+            self.cur_targets[:, self.actuated_dof_indices] = scale(self.actions[:, 6:],
                                                                    self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
             self.cur_targets[:, self.actuated_dof_indices] = self.act_moving_average * self.cur_targets[:,
                                                                                                         self.actuated_dof_indices] + (1.0 - self.act_moving_average) * self.prev_targets[:, self.actuated_dof_indices]
             self.cur_targets[:, self.actuated_dof_indices] = tensor_clamp(self.cur_targets[:, self.actuated_dof_indices],
                                                                           self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
+
+            # rigid force towards the base
+            # self.apply_forces[:, 1, :] = self.actions[:, 0:3] * self.dt * self.transition_scale * 50000
+            # self.apply_torque[:, 1, :] = self.actions[:, 3:6] * self.dt * self.orientation_scale * 10000
+            self.apply_forces[:, 1, :] = self.actions[:, 0:3] * self.dt * self.transition_scale * 0
+            self.apply_torque[:, 1, :] = self.actions[:, 3:6] * self.dt * self.orientation_scale * 0
+            self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.apply_forces), gymtorch.unwrap_tensor(self.apply_torque), gymapi.ENV_SPACE)
 
         self.prev_targets[:, self.actuated_dof_indices] = self.cur_targets[:, self.actuated_dof_indices]
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.cur_targets))
