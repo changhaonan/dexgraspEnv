@@ -49,11 +49,11 @@ env:
   actionPenaltyScale: -0.002
   reachGoalBonus: 1000
   maxDistSlide: 0.1
-  slidePenalty: -50.0
+  slidePenalty: 0.0  # -50.0
 
   # contact
   contactForceThreshold: 0.01
-  contactForceRewardScale: -1.0
+  contactForceRewardScale: 0.0  # -1.0
 
   # hold 
   holdStillLen: 20.0
