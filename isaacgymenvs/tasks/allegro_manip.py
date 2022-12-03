@@ -1,4 +1,6 @@
 import numpy as np
+import math
+from copy import copy
 import os
 import torch
 
@@ -6,6 +8,7 @@ from isaacgym import gymtorch
 from isaacgym import gymapi
 from isaacgym.torch_utils import *
 from isaacgymenvs.tasks.base.vec_task import VecTask
+from isaacgymenvs.utils.dexgrasp.math_utils import *
 from isaacgymenvs.utils.dexgrasp.drawing_utils import draw_6D_pose, draw_3D_pose, draw_bbox, draw_vector
 from isaacgymenvs.utils.dexgrasp.reward_utils import compute_pickup_reward, compute_reorient_reward, compute_hold_reward
 
@@ -93,9 +96,9 @@ class AllegroManip(VecTask):
         print("Obs type:", self.obs_type)
 
         self.num_obs_dict = {
-            "full_no_vel": 56,
-            "full": 78,
-            "full_state": 97
+            "full_no_vel": 57,
+            "full": 79,
+            "full_state": 98
         }
 
         self.up_axis = 'z'
@@ -110,7 +113,7 @@ class AllegroManip(VecTask):
 
         self.cfg["env"]["numObservations"] = self.num_obs_dict[self.obs_type]
         self.cfg["env"]["numStates"] = num_states
-        self.cfg["env"]["numActions"] = 16 + 6
+        self.cfg["env"]["numActions"] = 16 + 7
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
@@ -191,6 +194,10 @@ class AllegroManip(VecTask):
         
         self.rb_forces = torch.zeros((self.num_envs, self.num_bodies, 3), dtype=torch.float, device=self.device)
 
+        # for vis
+        self.attractor_pos = torch.zeros((self.num_envs, 1, 7))
+        self.attractor_shift = torch.zeros((self.num_envs, 1, 7))
+
         # set camera
         cam_pos = gymapi.Vec3(0.6, -0.6, 0.7)
         cam_target = gymapi.Vec3(0.0, 0.0, 0.5)
@@ -204,7 +211,7 @@ class AllegroManip(VecTask):
         self._create_ground_plane()
         self._create_envs(self.num_envs, self.cfg["env"]['envSpacing'], int(np.sqrt(self.num_envs)))
 
-        # If randomizing, apply once immediately on startup before the fist sim step
+        # if randomizing, apply once immediately on startup before the fist sim step
         if self.randomize:
             self.apply_randomizations(self.randomization_params)
 
@@ -340,7 +347,9 @@ class AllegroManip(VecTask):
         self.hand_part_indices = []
 
         self.object_rb_indices = []
-
+        
+        self.attractor_handles = []
+        self.attractor_base_poses = []
         #self.fingertip_handles = [self.gym.find_asset_rigid_body_index(shadow_hand_asset, name) for name in self.fingertips]
 
         shadow_hand_rb_count = self.gym.get_asset_rigid_body_count(shadow_hand_asset)
@@ -382,6 +391,31 @@ class AllegroManip(VecTask):
             hand_idx = self.gym.get_actor_index(env_ptr, shadow_hand_actor, gymapi.DOMAIN_SIM)
             self.hand_indices.append(hand_idx)
 
+            # add attractor to mount
+            self.attractor_handles.append(list())
+            self.attractor_base_poses.append(list())
+            attractor_parts = ["allegro_mount"]
+            body_dict = self.gym.get_actor_rigid_body_dict(env_ptr, shadow_hand_actor)
+            body_props = self.gym.get_actor_rigid_body_states(env_ptr, shadow_hand_actor, gymapi.STATE_POS)
+            for j, body in enumerate(attractor_parts):
+                attractor_properties = gymapi.AttractorProperties()
+                attractor_properties.stiffness = 1e6
+                attractor_properties.damping = 5e2
+                body_handle = self.gym.find_actor_rigid_body_handle(
+                    env_ptr, shadow_hand_actor, body)
+                attractor_properties.target = body_props["pose"][:][body_dict[body]]
+
+                # by default, offset pose is set to origin, so no need to set it
+                # set all direction attraction
+                attractor_properties.axes = gymapi.AXIS_ALL
+
+                # attractor_properties.target.p.z=0.1
+                attractor_properties.rigid_handle = body_handle
+                attractor_handle = self.gym.create_rigid_body_attractor(env_ptr, attractor_properties)
+
+                self.attractor_handles[i].append(attractor_handle)
+                self.attractor_base_poses[i].append(attractor_properties.target)
+                
             # create fingertip force-torque sensors
             # if self.obs_type == "full_state" or self.asymmetric_obs:
             #     for ft_handle in self.fingertip_handles:
@@ -706,10 +740,10 @@ class AllegroManip(VecTask):
         self.successes[env_ids] = 0
 
     def pre_physics_step(self, actions):
-        """ control the hand base and hand joint: (dim: 22 = 6 + 16)
+        """ control the hand base and hand joint: (dim: 23 = 7 + 16)
             - actions[0:3] controls the translation of hand base
-            - actions[3:6] controls the rotation of hand base
-            - actions[6:] controls the joint angles of the hand
+            - actions[3:7] controls the rotation of hand base
+            - actions[7:] controls the joint angles of the hand
         """
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         goal_env_ids = self.reset_goal_buf.nonzero(as_tuple=False).squeeze(-1)
@@ -725,36 +759,29 @@ class AllegroManip(VecTask):
         if len(env_ids) > 0:
             self.reset_idx(env_ids, goal_env_ids)
 
-        # set action to 0
-        # self.actions = torch.ones_like(actions).to(self.device) * -0.3
         self.actions = actions.clone().to(self.device)
         if self.use_relative_control:
             targets = self.prev_targets[:, self.actuated_dof_indices] + self.shadow_hand_dof_speed_scale * self.dt * self.actions
             self.cur_targets[:, self.actuated_dof_indices] = tensor_clamp(targets,
                                                                           self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
         else:
-            self.cur_targets[:, self.actuated_dof_indices] = scale(self.actions[:, 6:],
+            self.cur_targets[:, self.actuated_dof_indices] = scale(self.actions[:, 7:],
                                                                    self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
             self.cur_targets[:, self.actuated_dof_indices] = self.act_moving_average * self.cur_targets[:,
                                                                                                         self.actuated_dof_indices] + (1.0 - self.act_moving_average) * self.prev_targets[:, self.actuated_dof_indices]
             self.cur_targets[:, self.actuated_dof_indices] = tensor_clamp(self.cur_targets[:, self.actuated_dof_indices],
                                                                           self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
 
-            # rigid force towards the base
-            # self.apply_forces[:, 1, :] = self.actions[:, 0:3] * self.dt * self.transition_scale * 50000
-            # self.apply_torque[:, 1, :] = self.actions[:, 3:6] * self.dt * self.orientation_scale * 10000
-            self.apply_forces[:, 1, :] = self.actions[:, 0:3] * self.dt * self.transition_scale * 0
-            self.apply_torque[:, 1, :] = self.actions[:, 3:6] * self.dt * self.orientation_scale * 0
-            self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.apply_forces), gymtorch.unwrap_tensor(self.apply_torque), gymapi.ENV_SPACE)
+            # apply shift to attractor, hand mount
+            self.actions[:, 2] = 0.0  # fix z-motion
+            self.apply_attractor_shift(0, self.actions[:, 0:3] * 0.02, self.actions[:, 3:7] * 0.02) 
 
         self.prev_targets[:, self.actuated_dof_indices] = self.cur_targets[:, self.actuated_dof_indices]
-        self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.cur_targets))
+        self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.prev_targets))
 
         # apply random force to manipulated object
         force_after_reach = torch.where(self.reach_goal_buf[:, None].expand(-1, 3) == 1, self.goal_force, torch.zeros_like(self.goal_force))
         self.rb_forces.view(-1, 3)[self.object_rb_indices, :] = force_after_reach
-        # object_rb_handle = self.gym.get_actor_rigid_body_handle(self.envs[idx], self.object_handles[idx], 0)
-        # self.gym.apply_body_forces(self.envs[idx], 18, force=object_force)
         self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.rb_forces))
 
     def post_physics_step(self):
@@ -768,42 +795,56 @@ class AllegroManip(VecTask):
         if self.viewer and self.debug_viz:
             self.draw_auxilary()
 
+    def apply_attractor_shift(self, idx_attr, trans_offset, rots_offset):
+        for idx_env in range(self.num_envs):
+            # average shift
+            av_factor = 0.1
+            self.attractor_shift[idx_env, idx_attr, 0:3] = (
+                    1 - av_factor) * self.attractor_shift[idx_env, idx_attr, 0:3] + av_factor * trans_offset[idx_env, 0:3]
+            av_factor *= 0.1
+            self.attractor_shift[idx_env, idx_attr, 3:7] = (
+                    1 - av_factor) * self.attractor_shift[idx_env, idx_attr, 3:7] + av_factor * rots_offset[idx_env, 0:4]
+            
+            # apply translation shift
+            attr_pose = copy(self.attractor_base_poses[idx_env][idx_attr])
+            attr_pose.p.x += self.attractor_shift[idx_env, idx_attr, 0]
+            attr_pose.p.y += self.attractor_shift[idx_env, idx_attr, 1]
+            attr_pose.p.z += self.attractor_shift[idx_env, idx_attr, 2]
+
+            # apply rotation shift
+            # attr_rot_offset = gymapi.Quat(
+            #     self.attractor_shift[idx_env, idx_attr, 3], 
+            #     self.attractor_shift[idx_env, idx_attr, 4],
+            #     self.attractor_shift[idx_env, idx_attr, 5],
+            #     self.attractor_shift[idx_env, idx_attr, 6])
+            # attr_pose.r = quaternion_mul(
+            #     attr_pose.r, attr_rot_offset.normalize())  # Right multiply
+
+            self.gym.set_attractor_target(
+                self.envs[idx_env], self.attractor_handles[idx_env][idx_attr], attr_pose)
+            
+            # Save for vis
+            if self.viewer and self.debug_viz:
+                # save prev pos
+                self.attractor_pos[idx_env, idx_attr, 0] = attr_pose.p.x
+                self.attractor_pos[idx_env, idx_attr, 1] = attr_pose.p.y
+                self.attractor_pos[idx_env, idx_attr, 2] = attr_pose.p.z
+                self.attractor_pos[idx_env, idx_attr, 3] = attr_pose.r.x
+                self.attractor_pos[idx_env, idx_attr, 4] = attr_pose.r.y
+                self.attractor_pos[idx_env, idx_attr, 5] = attr_pose.r.z
+                self.attractor_pos[idx_env, idx_attr, 6] = attr_pose.r.w
+
     def draw_auxilary(self):
         # draw axes on target object
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
 
         for i in range(self.num_envs):
-            targetx = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
-            targety = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
-            targetz = (self.goal_pos[i] + quat_apply(self.goal_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
-
-            # p0 = self.goal_pos[i].cpu().numpy() + self.goal_displacement_tensor.cpu().numpy()
-            # p0 = self.goal_pos[i].cpu().numpy() 
-            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetx[0], targetx[1], targetx[2]], [0.85, 0.1, 0.1])
-            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targety[0], targety[1], targety[2]], [0.1, 0.85, 0.1])
-            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], targetz[0], targetz[1], targetz[2]], [0.1, 0.1, 0.85])
-
-            # objectx = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([1, 0, 0], device=self.device) * 0.2)).cpu().numpy()
-            # objecty = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 1, 0], device=self.device) * 0.2)).cpu().numpy()
-            # objectz = (self.object_pos[i] + quat_apply(self.object_rot[i], to_torch([0, 0, 1], device=self.device) * 0.2)).cpu().numpy()
-
-            # p0 = self.object_pos[i].cpu().numpy()
-            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectx[0], objectx[1], objectx[2]], [0.85, 0.1, 0.1])
-            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objecty[0], objecty[1], objecty[2]], [0.1, 0.85, 0.1])
-            # self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], objectz[0], objectz[1], objectz[2]], [0.1, 0.1, 0.85])
-
-            # # draw init state
-            # draw_6D_pose(self.gym, self.viewer, self.envs[i], self.object_init_state[i, 0:3].cpu().numpy(), self.object_init_state[i, 3:7].cpu().numpy(), 
-            #     sphere_radius=0.01, color=(0, 1, 0))
-
-            # # draw target
-            # draw_6D_pose(self.gym, self.viewer, self.envs[i], self.goal_pos[i].cpu().numpy(), self.goal_rot[i].cpu().numpy(), sphere_radius=0.01, 
-            #     color=(0, 0, 1))
-
-            # draw contacts
-            # self.gym.draw_env_rigid_contacts(self.viewer, self.envs[i], gymapi.Vec3(0, 255, 0), 0.1, False)
-
+            # draw attractor
+            draw_6D_pose(self.gym, self.viewer, self.envs[i], 
+                self.attractor_pos[i, 0, 0:3], 
+                self.attractor_pos[i, 0, 3:7])
+            
             # draw out the target force, centered at the object
             object_center = self.object_pos[i].cpu().numpy()
             force = self.goal_force[i].cpu().numpy() * 0.1  # scale down
