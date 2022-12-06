@@ -126,11 +126,6 @@ class AllegroManip(VecTask):
             print("Reset time: ", self.reset_time)
             print("New episode length: ", self.max_episode_length)
 
-        if self.viewer != None:
-            cam_pos = gymapi.Vec3(10.0, 5.0, 1.0)
-            cam_target = gymapi.Vec3(6.0, 5.0, 0.0)
-            self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
-
         # get gym GPU state tensors
         actor_root_state_tensor = self.gym.acquire_actor_root_state_tensor(self.sim)
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
@@ -201,8 +196,8 @@ class AllegroManip(VecTask):
         self.ee_attr_shift = torch.zeros((self.num_envs, 7))
 
         # set camera
-        cam_pos = gymapi.Vec3(0.6, -0.6, 0.7)
-        cam_target = gymapi.Vec3(0.0, 0.0, 0.5)
+        cam_pos = gymapi.Vec3(0.0, -0.3, 1.5)
+        cam_target = gymapi.Vec3(0.0, 0.0, 0.0)
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
     def create_sim(self):

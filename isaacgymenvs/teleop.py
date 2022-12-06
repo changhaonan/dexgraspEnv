@@ -56,7 +56,6 @@ def launch_test_env(cfg):
             ee_pose[2] = 0.0  # fix the z axis
             action[0:3] = ee_pose
             last_ee_pose = ee_pose
-            print(f"ee_pose: {ee_pose}")
         action[3:7] = 0.0  # fix the rotation
         vec_action = np.repeat(action[np.newaxis, :], cfg.num_envs, axis=0)
         obs, reward, done, info = env.step(
