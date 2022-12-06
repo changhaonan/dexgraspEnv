@@ -801,7 +801,7 @@ class AllegroManip(VecTask):
         # scale the offset
         ee_actions = scale(ee_actions, self.ee_dof_lower_limits, self.ee_dof_upper_limits)
         # average shift
-        av_factor = 1.0
+        av_factor = 0.5
         self.ee_attr_shift[:, 0:3] = (1 - av_factor) * self.ee_attr_shift[:, 0:3] + av_factor * ee_actions[:, 0:3]
         av_factor *= 0.0
         self.ee_attr_shift[:, 3:7] = (1 - av_factor) * self.ee_attr_shift[:, 3:7] + av_factor * ee_actions[:, 3:7]
