@@ -30,8 +30,8 @@ def launch_test_env(cfg):
     # Run the environment
     while True:
         action = env.action_space.sample()
-        action[0:7] = 0.0  # Fix the wrist
-        action[2] = -1.0  # Move the end effector to the bottom
+        # action[0:7] = 0.0  # Fix the wrist
+        # action[2] = -1.0  # Move the end effector to the bottom
         vec_action = np.repeat(action[np.newaxis, :], cfg.num_envs, axis=0)
         obs, reward, done, info = env.step(torch.from_numpy(vec_action).to(cfg.rl_device))
 

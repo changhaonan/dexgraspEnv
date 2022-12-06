@@ -21,6 +21,7 @@ class AllegroManip(VecTask):
         self.manipulate_mode = cfg["env"]["manipulateMode"]
         self.ee_dof_lower_limits = cfg["env"]["eeDofLowerLimits"]
         self.ee_dof_upper_limits = cfg["env"]["eeDofUpperLimits"]
+        self.ee_linear_speed_limit = cfg["env"]["eeLinearSpeedLimit"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
 
         self.hold_still_len = self.cfg["env"]["holdStillLen"]
@@ -398,7 +399,7 @@ class AllegroManip(VecTask):
             body_props = self.gym.get_actor_rigid_body_states(env_ptr, shadow_hand_actor, gymapi.STATE_POS)
             attractor_properties = gymapi.AttractorProperties()
             attractor_properties.stiffness = 1e6
-            attractor_properties.damping = 5e2
+            attractor_properties.damping = 1e5 # 5e2
             ee_handle = self.gym.find_actor_rigid_body_handle(
                 env_ptr, shadow_hand_actor, ee_name)
             attractor_properties.target = body_props["pose"][:][body_dict[ee_name]]
@@ -795,10 +796,16 @@ class AllegroManip(VecTask):
     def apply_attractor_shift(self, ee_actions):
         # scale the offset
         ee_actions = scale(ee_actions, self.ee_dof_lower_limits, self.ee_dof_upper_limits)
+        ee_linear_speeds = ee_actions[:, 0:3] - self.ee_attr_shift[:, 0:3]
+        ee_linear_speeds_norm = torch.norm(ee_linear_speeds, dim=1, keepdim=True)
+        ee_linear_speeds = torch.where(
+            ee_linear_speeds_norm > self.ee_linear_speed_limit,
+            self.ee_linear_speed_limit * ee_linear_speeds / ee_linear_speeds_norm,
+            ee_linear_speeds
+        )
+        self.ee_attr_shift[:, 0:3] += ee_linear_speeds
         # average shift
         av_factor = 0.5
-        self.ee_attr_shift[:, 0:3] = (1 - av_factor) * self.ee_attr_shift[:, 0:3] + av_factor * ee_actions[:, 0:3]
-        av_factor *= 0.0
         self.ee_attr_shift[:, 3:7] = (1 - av_factor) * self.ee_attr_shift[:, 3:7] + av_factor * ee_actions[:, 3:7]
         # clamp the shift
         self.ee_attr_shift = tensor_clamp(self.ee_attr_shift, self.ee_dof_lower_limits, self.ee_dof_upper_limits)
@@ -840,9 +847,9 @@ class AllegroManip(VecTask):
 
         for i in range(self.num_envs):
             # draw attractor
-            draw_6D_pose(self.gym, self.viewer, self.envs[i], 
-                self.ee_attr_pos[i, 0:3], 
-                self.ee_attr_pos[i, 3:7])
+            # draw_6D_pose(self.gym, self.viewer, self.envs[i], 
+            #     self.ee_attr_pos[i, 0:3], 
+            #     self.ee_attr_pos[i, 3:7])
             
             # draw out the target force, centered at the object
             object_center = self.object_pos[i].cpu().numpy()
