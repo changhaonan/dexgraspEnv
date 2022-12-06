@@ -19,6 +19,8 @@ class AllegroManip(VecTask):
 
         self.cfg = cfg
         self.manipulate_mode = cfg["env"]["manipulateMode"]
+        self.ee_dof_lower_limits = cfg["env"]["eeDofLowerLimits"]
+        self.ee_dof_upper_limits = cfg["env"]["eeDofUpperLimits"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
 
         self.hold_still_len = self.cfg["env"]["holdStillLen"]
@@ -195,8 +197,8 @@ class AllegroManip(VecTask):
         self.rb_forces = torch.zeros((self.num_envs, self.num_bodies, 3), dtype=torch.float, device=self.device)
 
         # for vis
-        self.attractor_pos = torch.zeros((self.num_envs, 1, 7))
-        self.attractor_shift = torch.zeros((self.num_envs, 1, 7))
+        self.ee_attr_pos = torch.zeros((self.num_envs, 7))
+        self.ee_attr_shift = torch.zeros((self.num_envs, 7))
 
         # set camera
         cam_pos = gymapi.Vec3(0.6, -0.6, 0.7)
@@ -240,7 +242,7 @@ class AllegroManip(VecTask):
         table_asset_options.thickness = 0.002
         table_asset_options.mesh_normal_mode = gymapi.COMPUTE_PER_VERTEX
 
-        table_dims = gymapi.Vec3(0.6, 1.0, 0.4)
+        table_dims = gymapi.Vec3(1.0, 0.6, 0.4)
         table_pose = gymapi.Transform()
         table_pose.p = gymapi.Vec3(0.0, 0.0, 0.5 * table_dims.z)
         table_asset = self.gym.create_box(
@@ -254,8 +256,8 @@ class AllegroManip(VecTask):
         hand_asset_options.collapse_fixed_joints = True
         hand_asset_options.disable_gravity = True
         hand_asset_options.thickness = 0.001
-        hand_asset_options.angular_damping = 100
-        hand_asset_options.linear_damping = 100
+        hand_asset_options.angular_damping = 0.01
+        hand_asset_options.linear_damping = 0.01
 
         if self.physics_engine == gymapi.SIM_PHYSX:
             hand_asset_options.use_physx_armature = True
@@ -299,6 +301,8 @@ class AllegroManip(VecTask):
         self.shadow_hand_dof_upper_limits = to_torch(self.shadow_hand_dof_upper_limits, device=self.device)
         self.shadow_hand_dof_default_pos = to_torch(self.shadow_hand_dof_default_pos, device=self.device)
         self.shadow_hand_dof_default_vel = to_torch(self.shadow_hand_dof_default_vel, device=self.device)
+        self.ee_dof_lower_limits = to_torch(self.ee_dof_lower_limits, device=self.device)
+        self.ee_dof_upper_limits = to_torch(self.ee_dof_upper_limits, device=self.device)
 
         # load manipulated object and goal assets
         object_asset_options = gymapi.AssetOptions()
@@ -309,7 +313,9 @@ class AllegroManip(VecTask):
 
         shadow_hand_start_pose = gymapi.Transform()
         shadow_hand_start_pose.p = gymapi.Vec3(*get_axis_params(0.57, self.up_axis_idx))
-        shadow_hand_start_pose.r = gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 1, 0), 0) * gymapi.Quat.from_axis_angle(gymapi.Vec3(1, 0, 0), 0.47 * np.pi) * gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 0, 1), 0.25 * np.pi)
+        shadow_hand_start_pose.r = gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 0, 1), -1.0 * np.pi) * \
+            gymapi.Quat.from_axis_angle(gymapi.Vec3(1, 0, 0), 0.5 * np.pi) * \
+            gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 0, 1), 0.25 * np.pi)
 
         object_start_pose = gymapi.Transform()
         object_start_pose.p = gymapi.Vec3()
@@ -348,8 +354,8 @@ class AllegroManip(VecTask):
 
         self.object_rb_indices = []
         
-        self.attractor_handles = []
-        self.attractor_base_poses = []
+        self.ee_attr_handles = []
+        self.ee_attr_base_poses = []
         #self.fingertip_handles = [self.gym.find_asset_rigid_body_index(shadow_hand_asset, name) for name in self.fingertips]
 
         shadow_hand_rb_count = self.gym.get_asset_rigid_body_count(shadow_hand_asset)
@@ -391,30 +397,27 @@ class AllegroManip(VecTask):
             hand_idx = self.gym.get_actor_index(env_ptr, shadow_hand_actor, gymapi.DOMAIN_SIM)
             self.hand_indices.append(hand_idx)
 
-            # add attractor to mount
-            self.attractor_handles.append(list())
-            self.attractor_base_poses.append(list())
-            attractor_parts = ["allegro_mount"]
+            # bind attractor to ee
+            ee_name = "allegro_mount"
             body_dict = self.gym.get_actor_rigid_body_dict(env_ptr, shadow_hand_actor)
             body_props = self.gym.get_actor_rigid_body_states(env_ptr, shadow_hand_actor, gymapi.STATE_POS)
-            for j, body in enumerate(attractor_parts):
-                attractor_properties = gymapi.AttractorProperties()
-                attractor_properties.stiffness = 1e6
-                attractor_properties.damping = 5e2
-                body_handle = self.gym.find_actor_rigid_body_handle(
-                    env_ptr, shadow_hand_actor, body)
-                attractor_properties.target = body_props["pose"][:][body_dict[body]]
+            attractor_properties = gymapi.AttractorProperties()
+            attractor_properties.stiffness = 1e6
+            attractor_properties.damping = 5e2
+            ee_handle = self.gym.find_actor_rigid_body_handle(
+                env_ptr, shadow_hand_actor, ee_name)
+            attractor_properties.target = body_props["pose"][:][body_dict[ee_name]]
 
-                # by default, offset pose is set to origin, so no need to set it
-                # set all direction attraction
-                attractor_properties.axes = gymapi.AXIS_ALL
+            # by default, offset pose is set to origin, so no need to set it
+            # set all direction attraction
+            attractor_properties.axes = gymapi.AXIS_ALL
 
-                # attractor_properties.target.p.z=0.1
-                attractor_properties.rigid_handle = body_handle
-                attractor_handle = self.gym.create_rigid_body_attractor(env_ptr, attractor_properties)
+            # attractor_properties.target.p.z=0.1
+            attractor_properties.rigid_handle = ee_handle
+            attractor_handle = self.gym.create_rigid_body_attractor(env_ptr, attractor_properties)
 
-                self.attractor_handles[i].append(attractor_handle)
-                self.attractor_base_poses[i].append(attractor_properties.target)
+            self.ee_attr_handles.append(attractor_handle)
+            self.ee_attr_base_poses.append(attractor_properties.target)
                 
             # create fingertip force-torque sensors
             # if self.obs_type == "full_state" or self.asymmetric_obs:
@@ -773,8 +776,7 @@ class AllegroManip(VecTask):
                                                                           self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
 
             # apply shift to attractor, hand mount
-            self.actions[:, 2] = 0.0  # fix z-motion
-            self.apply_attractor_shift(0, self.actions[:, 0:3] * 0.02, self.actions[:, 3:7] * 0.02) 
+            self.apply_attractor_shift(self.actions[:, 0:7]) 
 
         self.prev_targets[:, self.actuated_dof_indices] = self.cur_targets[:, self.actuated_dof_indices]
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.prev_targets))
@@ -795,44 +797,46 @@ class AllegroManip(VecTask):
         if self.viewer and self.debug_viz:
             self.draw_auxilary()
 
-    def apply_attractor_shift(self, idx_attr, trans_offset, rots_offset):
+    def apply_attractor_shift(self, ee_actions):
+        # scale the offset
+        ee_actions = scale(ee_actions, self.ee_dof_lower_limits, self.ee_dof_upper_limits)
+        # average shift
+        av_factor = 1.0
+        self.ee_attr_shift[:, 0:3] = (1 - av_factor) * self.ee_attr_shift[:, 0:3] + av_factor * ee_actions[:, 0:3]
+        av_factor *= 0.0
+        self.ee_attr_shift[:, 3:7] = (1 - av_factor) * self.ee_attr_shift[:, 3:7] + av_factor * ee_actions[:, 3:7]
+        # clamp the shift
+        self.ee_attr_shift = tensor_clamp(self.ee_attr_shift, self.ee_dof_lower_limits, self.ee_dof_upper_limits)
+
         for idx_env in range(self.num_envs):
-            # average shift
-            av_factor = 0.1
-            self.attractor_shift[idx_env, idx_attr, 0:3] = (
-                    1 - av_factor) * self.attractor_shift[idx_env, idx_attr, 0:3] + av_factor * trans_offset[idx_env, 0:3]
-            av_factor *= 0.1
-            self.attractor_shift[idx_env, idx_attr, 3:7] = (
-                    1 - av_factor) * self.attractor_shift[idx_env, idx_attr, 3:7] + av_factor * rots_offset[idx_env, 0:4]
-            
             # apply translation shift
-            attr_pose = copy(self.attractor_base_poses[idx_env][idx_attr])
-            attr_pose.p.x += self.attractor_shift[idx_env, idx_attr, 0]
-            attr_pose.p.y += self.attractor_shift[idx_env, idx_attr, 1]
-            attr_pose.p.z += self.attractor_shift[idx_env, idx_attr, 2]
+            attr_pose = copy(self.ee_attr_base_poses[idx_env])
+            attr_pose.p.x += self.ee_attr_shift[idx_env, 0]
+            attr_pose.p.y += self.ee_attr_shift[idx_env, 1]
+            attr_pose.p.z += self.ee_attr_shift[idx_env, 2]
 
             # apply rotation shift
             # attr_rot_offset = gymapi.Quat(
-            #     self.attractor_shift[idx_env, idx_attr, 3], 
-            #     self.attractor_shift[idx_env, idx_attr, 4],
-            #     self.attractor_shift[idx_env, idx_attr, 5],
-            #     self.attractor_shift[idx_env, idx_attr, 6])
+            #     self.ee_attr_shift[idx_env, 3], 
+            #     self.ee_attr_shift[idx_env, 4],
+            #     self.ee_attr_shift[idx_env, 5],
+            #     self.ee_attr_shift[idx_env, 6])
             # attr_pose.r = quaternion_mul(
             #     attr_pose.r, attr_rot_offset.normalize())  # Right multiply
 
             self.gym.set_attractor_target(
-                self.envs[idx_env], self.attractor_handles[idx_env][idx_attr], attr_pose)
+                self.envs[idx_env], self.ee_attr_handles[idx_env], attr_pose)
             
             # Save for vis
             if self.viewer and self.debug_viz:
                 # save prev pos
-                self.attractor_pos[idx_env, idx_attr, 0] = attr_pose.p.x
-                self.attractor_pos[idx_env, idx_attr, 1] = attr_pose.p.y
-                self.attractor_pos[idx_env, idx_attr, 2] = attr_pose.p.z
-                self.attractor_pos[idx_env, idx_attr, 3] = attr_pose.r.x
-                self.attractor_pos[idx_env, idx_attr, 4] = attr_pose.r.y
-                self.attractor_pos[idx_env, idx_attr, 5] = attr_pose.r.z
-                self.attractor_pos[idx_env, idx_attr, 6] = attr_pose.r.w
+                self.ee_attr_pos[idx_env, 0] = attr_pose.p.x
+                self.ee_attr_pos[idx_env, 1] = attr_pose.p.y
+                self.ee_attr_pos[idx_env, 2] = attr_pose.p.z
+                self.ee_attr_pos[idx_env, 3] = attr_pose.r.x
+                self.ee_attr_pos[idx_env, 4] = attr_pose.r.y
+                self.ee_attr_pos[idx_env, 5] = attr_pose.r.z
+                self.ee_attr_pos[idx_env, 6] = attr_pose.r.w
 
     def draw_auxilary(self):
         # draw axes on target object
@@ -842,8 +846,8 @@ class AllegroManip(VecTask):
         for i in range(self.num_envs):
             # draw attractor
             draw_6D_pose(self.gym, self.viewer, self.envs[i], 
-                self.attractor_pos[i, 0, 0:3], 
-                self.attractor_pos[i, 0, 3:7])
+                self.ee_attr_pos[i, 0:3], 
+                self.ee_attr_pos[i, 3:7])
             
             # draw out the target force, centered at the object
             object_center = self.object_pos[i].cpu().numpy()

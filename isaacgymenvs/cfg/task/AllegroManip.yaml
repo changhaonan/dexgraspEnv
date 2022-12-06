@@ -33,6 +33,10 @@ env:
   # manipulate mode
   manipulateMode: "hold"  # pickup, reorient, hold
 
+  # manipulate area
+  eeDofLowerLimits: [-0.5, -0.3, 0.0, -0.1, -0.1, -0.1, -0.1]
+  eeDofUpperLimits: [0.5, 0.3, 0.2, 0.1, 0.1, 0.1, 0.1]
+
   # Random forces applied to the object
   forceScale: 0.0
   forceProbRange: [0.001, 0.1]
