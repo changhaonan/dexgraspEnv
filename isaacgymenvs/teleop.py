@@ -33,8 +33,12 @@ def launch_test_env(cfg):
     # Run the environment
     hand_pose_estimator = MediapipeHandEstimator()
     cap = cv2.VideoCapture(0)
-    frame = 0
+    frame_idx = 0
     last_ee_pose = np.zeros(3)
+
+    # Read the file
+    file_name = "/home/robot-learning/Projects/dexgraspEnv/isaacgymenvs/test/signal_8.npy"
+    hand_signal = np.load(file_name)
     while True:
         # Capture the hand pose
         ret, frame = cap.read()
@@ -57,13 +61,15 @@ def launch_test_env(cfg):
             action[0:3] = ee_pose
             last_ee_pose = ee_pose
         action[3:7] = 0.0  # fix the rotation
+        # Set the finger motion
+        action[7:] = hand_signal[frame_idx % len(hand_signal)]
         vec_action = np.repeat(action[np.newaxis, :], cfg.num_envs, axis=0)
         obs, reward, done, info = env.step(
             torch.from_numpy(vec_action).to(cfg.rl_device)
         )
         
         # Update frame
-        frame += 1
+        frame_idx += 1
 
 
 if __name__ == "__main__":

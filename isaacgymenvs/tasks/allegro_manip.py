@@ -193,8 +193,8 @@ class AllegroManip(VecTask):
         self.rb_forces = torch.zeros((self.num_envs, self.num_bodies, 3), dtype=torch.float, device=self.device)
 
         # for vis
-        self.ee_attr_pos = torch.zeros((self.num_envs, 7))
-        self.ee_attr_shift = torch.zeros((self.num_envs, 7))
+        self.ee_attr_pos = torch.zeros((self.num_envs, 7), dtype=torch.float, device=self.device)
+        self.ee_attr_shift = torch.zeros((self.num_envs, 7), dtype=torch.float, device=self.device)
 
         # set camera
         cam_pos = gymapi.Vec3(0.0, -0.3, 1.5)
@@ -252,8 +252,8 @@ class AllegroManip(VecTask):
         hand_asset_options.collapse_fixed_joints = True
         hand_asset_options.disable_gravity = True
         hand_asset_options.thickness = 0.001
-        hand_asset_options.angular_damping = 0.01
-        hand_asset_options.linear_damping = 0.01
+        hand_asset_options.angular_damping = 100  # 0.01
+        hand_asset_options.linear_damping = 100  # 0.01
 
         if self.physics_engine == gymapi.SIM_PHYSX:
             hand_asset_options.use_physx_armature = True
@@ -291,7 +291,8 @@ class AllegroManip(VecTask):
             shadow_hand_dof_props['damping'][i] = 0.1
             shadow_hand_dof_props['friction'][i] = 0.01
             shadow_hand_dof_props['armature'][i] = 0.001
-
+        print("lower: ", self.shadow_hand_dof_lower_limits)
+        print("upper: ", self.shadow_hand_dof_upper_limits)
         self.actuated_dof_indices = to_torch(self.actuated_dof_indices, dtype=torch.long, device=self.device)
         self.shadow_hand_dof_lower_limits = to_torch(self.shadow_hand_dof_lower_limits, device=self.device)
         self.shadow_hand_dof_upper_limits = to_torch(self.shadow_hand_dof_upper_limits, device=self.device)
@@ -771,8 +772,9 @@ class AllegroManip(VecTask):
             self.cur_targets[:, self.actuated_dof_indices] = tensor_clamp(self.cur_targets[:, self.actuated_dof_indices],
                                                                           self.shadow_hand_dof_lower_limits[self.actuated_dof_indices], self.shadow_hand_dof_upper_limits[self.actuated_dof_indices])
 
-            # apply shift to attractor, hand mount
-            self.apply_attractor_shift(self.actions[:, 0:7]) 
+            if (self.device == "cpu"):
+                # apply shift to attractor, hand mount
+                self.apply_attractor_shift(self.actions[:, 0:7]) 
 
         self.prev_targets[:, self.actuated_dof_indices] = self.cur_targets[:, self.actuated_dof_indices]
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.prev_targets))

@@ -45,3 +45,12 @@ IK: franka_cube_stack.py, Factory_control.py
 
 Check this file: https://www.cs.cmu.edu/~15464-s13/lectures/lecture6/iksurvey.pdf
 
+- We need to decouple the wrist motion and the hand motion.
+- So we need three policies here:
+	- A policy to control the movement of wrist. (First to train)
+	- A policy to control the grasp. (Second to train)
+	- A policy to control the release / put down. (Third to train)
+
+This is idea of this week. (Also making the imitation learning pipeline working) Let's train three policy. 
+
+I also want to try some simpler training method (Not rl_games). Easier model makes us easier to change. This week, we just train three seperate policy. And next week, we look for how to combine them. Finally, we make some reports. 
