@@ -70,7 +70,7 @@ env:
   transitionScale: 0.5
   orientationScale: 0.1
 
-  objectType: "hammer" # can be block, egg, pen, can, banana, mug, brick, bottle, hammer, torch, pot
+  objectType: "water_can" # can be block, egg, pen, can, banana, mug, brick, bottle, hammer, torch, pot, water_can
   observationType: "full_state" # can be "no_vel", "full_state"
   asymmetric_observations: False
   goalTransTolerance: 0.01
@@ -91,6 +91,7 @@ env:
     assetFileNameHammer: "urdf/ycb/hammer/model.urdf"
     assetFileNamePot: "urdf/ycb/pot/model.urdf"
     assetFileNameTorch: "urdf/ycb/torch/model.urdf"
+    assetFileNameWatercan: "urdf/ycb/water_can/model.urdf"
 
 task:
   randomize: False
