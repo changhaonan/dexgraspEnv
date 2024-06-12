@@ -246,6 +246,7 @@ class KukaAllegroGrasp(VecTask):
         banana_asset_file = self.cfg["env"]["asset"]["assetFileNameBanana"]
         mug_asset_file = self.cfg["env"]["asset"]["assetFileNameMug"]
         brick_asset_file = self.cfg["env"]["asset"]["assetFileNameBrick"]
+        
         object_files = []
         object_files.append(can_asset_file)
         object_files.append(banana_asset_file)

@@ -1,0 +1,22 @@
+<?xml version="1.0" ?>
+<robot name="Cole_Hardware_Hammer_Black">
+  <link name="Cole_Hardware_Hammer_Black__link_0">
+    <inertial>
+      <mass value="0.00001"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="Cole_Hardware_Hammer_Black__collision_0">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="ycb/hammer/model.obj" scale="0.8 0.8 0.8"/>
+      </geometry>
+    </collision>
+    <visual name="Cole_Hardware_Hammer_Black__visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="ycb/hammer/model.obj" scale="0.8 0.8 0.8"/>
+      </geometry>
+    </visual>
+  </link>
+</robot>

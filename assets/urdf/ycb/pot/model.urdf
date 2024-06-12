@@ -1,0 +1,24 @@
+<?xml version="1.0" ?>
+<robot name="Threshold_Porcelain_Pitcher_White">
+  <link name="Threshold_Porcelain_Pitcher_White__link_0">
+    <inertial>
+      <mass value="0.000017"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+
+    <collision name="Threshold_Porcelain_Pitcher_White__collision_0">
+      <origin xyz="0.0 0.0 0.0"/>
+      <geometry>
+        <mesh filename="ycb/pot/model.obj" scale="0.4 0.4 0.4"/>
+      </geometry>
+    </collision>
+
+    <visual name="Threshold_Porcelain_Pitcher_White__visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="ycb/pot/model.obj" scale="0.4 0.4 0.4"/>
+      </geometry>
+    </visual>
+  </link>
+</robot>

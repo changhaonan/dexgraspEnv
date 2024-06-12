@@ -73,7 +73,8 @@ class AllegroManip(VecTask):
         self.orientation_scale = self.cfg["env"]["orientationScale"]
 
         self.object_type = self.cfg["env"]["objectType"]
-        assert self.object_type in ["block", "egg", "pen", "can", "banana", "mug", "brick"]
+        assert self.object_type in ["block", "egg", "pen", "can", "banana", "mug", "brick", \
+                                    "bottle", "hammer", "pot", "torch","water_can"]
         self.ignore_z = (self.object_type == "pen")
         self.asset_files_dict = {}
         if "asset" in self.cfg["env"]:
@@ -84,7 +85,12 @@ class AllegroManip(VecTask):
             self.asset_files_dict["banana"] = self.cfg["env"]["asset"].get("assetFileNameBanana")
             self.asset_files_dict["mug"] = self.cfg["env"]["asset"].get("assetFileNameMug")
             self.asset_files_dict["brick"] = self.cfg["env"]["asset"].get("assetFileNameBrick")
-        
+            self.asset_files_dict["bottle"] = self.cfg["env"]["asset"].get("assetFileNameBottle")
+            self.asset_files_dict["hammer"] = self.cfg["env"]["asset"].get("assetFileNameHammer")
+            self.asset_files_dict["pot"] = self.cfg["env"]["asset"].get("assetFileNamePot")
+            self.asset_files_dict["torch"] = self.cfg["env"]["asset"].get("assetFileNameTorch")
+            self.asset_files_dict["water_can"] = self.cfg["env"]["asset"].get("assetFileNameWatercan")
+
         # can be "full_no_vel", "full", "full_state"
         self.obs_type = self.cfg["env"]["observationType"]
 
@@ -445,12 +451,6 @@ class AllegroManip(VecTask):
             goal_handle = self.gym.create_actor(env_ptr, goal_asset, goal_start_pose, "goal_object", i + self.num_envs, 0, 0)
             goal_object_idx = self.gym.get_actor_index(env_ptr, goal_handle, gymapi.DOMAIN_SIM)
             self.goal_object_indices.append(goal_object_idx)
-
-            if self.object_type != "block":
-                self.gym.set_rigid_body_color(
-                    env_ptr, object_handle, 0, gymapi.MESH_VISUAL, gymapi.Vec3(0.6, 0.72, 0.98))
-                self.gym.set_rigid_body_color(
-                    env_ptr, goal_handle, 0, gymapi.MESH_VISUAL, gymapi.Vec3(0.6, 0.72, 0.98))
 
             if self.aggregate_mode > 0:
                 self.gym.end_aggregate(env_ptr)
